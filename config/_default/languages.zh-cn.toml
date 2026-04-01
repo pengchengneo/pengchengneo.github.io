@@ -1,0 +1,20 @@
+disabled = false
+languageCode = "zh-CN"
+languageName = "中文"
+weight = 1
+title = "Pengcheng's Blog"
+
+[params]
+  displayName = "ZH"
+  isoCode = "zh-cn"
+  rtl = false
+  dateFormat = "2006年1月2日"
+  description = "ML Infra 工程师 | GPU/TPU 训练与推理"
+
+[params.author]
+  name = "Pengcheng"
+  headline = "AI Infra Engineer"
+  bio = "浙大 & 清华 EE | 美团 → MiniMax | 专注大规模训练与推理基础设施"
+  links = [
+    { github = "https://github.com/pengchengneo" },
+  ]

@@ -1,0 +1,9 @@
+body {
+  background: linear-gradient(180deg, #ffffff 0%, #fff7ed 40%, #fed7aa 100%);
+  background-attachment: fixed;
+}
+
+.dark body {
+  background: linear-gradient(180deg, #1c1917 0%, #431407 100%);
+  background-attachment: fixed;
+}
