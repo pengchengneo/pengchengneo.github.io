@@ -1,6 +1,6 @@
 ---
 title: "从 @jax.jit 到 VLIW：追踪 TPU 编译器的每一层"
-date: 2026-03-06
+date: 2026-04-06
 draft: false
 tags: ["Pallas", "TPU", "JAX"]
 categories: ["TPU"]
