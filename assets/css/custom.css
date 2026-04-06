@@ -8,9 +8,9 @@ body {
   background-attachment: fixed;
 }
 
-/* --- 减少 body 两侧 padding，让内容区更宽 --- */
+/* --- 仅文章页：减少 body 两侧 padding，让内容区更宽 --- */
 @media (min-width: 1024px) {
-  body {
+  body:has(.article-centered) {
     padding-left: 1.5rem !important;
     padding-right: 1.5rem !important;
     max-width: none !important;
