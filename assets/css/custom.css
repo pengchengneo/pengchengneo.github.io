@@ -1,3 +1,8 @@
+/* --- 首页简介 prose 不限宽 --- */
+article .prose {
+  max-width: none !important;
+}
+
 body {
   background: linear-gradient(180deg, #ffffff 0%, #fff7ed 40%, #fed7aa 100%);
   background-attachment: fixed;

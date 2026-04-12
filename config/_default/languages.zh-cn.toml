@@ -13,6 +13,7 @@ title = "Pengcheng's Blog"
 
 [params.author]
   name = "Pengcheng"
+  image = "img/author.png"
   headline = "AI Infra Engineer"
   bio = "浙大 & 清华 EE | 美团 → MiniMax | 专注大规模训练与推理基础设施"
   links = [
