@@ -22,7 +22,7 @@ import numpy as np
 
 TPU 及其 TensorCore 由内存空间（数组可以驻留的地方）、寄存器（临时存储标量和数组值）和计算单元（使用寄存器中的值进行计算）组成。下图是一个 TPU 的示意图，其中 `x` 和 `y` 是驻留在高带宽内存（HBM）中的数组：
 
-![TPU 内存空间示意图](pallas_tpu_pipelining_img1.png)
+![TPU 内存空间示意图](../pallas_tpu_pipelining_img1.png)
 
 让我们更详细地讨论此图的组成部分：
 
@@ -177,7 +177,7 @@ np.testing.assert_allclose(x, out)
 
 某些 TPU 芯片有两个 TensorCore，但对 JAX 用户来说表现为一个设备。这被称为"megacore"。独立的 TensorCore 拥有各自独立的 VMEM、VREGs、SMEM、SREGs 和计算单元，但 **共享 HBM**。
 
-![TPU 内存空间示意图（Megacore）](pallas_tpu_pipelining_img2.png)
+![TPU 内存空间示意图（Megacore）](../pallas_tpu_pipelining_img2.png)
 
 从概念上讲，Megacore 中的 TPU 表现得像非常简单的 GPU，即它们只有两个线程。我们如何修改内核以同时利用两个 TensorCore？
 

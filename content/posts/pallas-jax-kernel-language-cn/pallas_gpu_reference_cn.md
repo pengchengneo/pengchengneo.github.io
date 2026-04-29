@@ -22,7 +22,7 @@ import jax.experimental.pallas.mosaic_gpu as plgpu
 
 每个 SM 包含一块称为 _shared memory_（SMEM）的快速内存和 4 个子分区，每个子分区包含一个 _warp scheduler_ 和计算单元（ALU、TensorCore 等）。这也反映在 CUDA 程序中：每个 _warp_（block 中连续的 32 个 CUDA 线程组成的组）以轮询方式分配到这些子分区之一。与 block 类似，每个 warp 被分配到恰好一个子分区（它不会迁移），但多个 warp 可以被分配到同一个 SM 子分区。在每个时钟周期，每个子分区的 warp scheduler 会尝试选择其驻留 warp 之一来执行下一条指令。
 
-![NVIDIA SM 示意图](pallas_gpu_nvidia_sm.svg)
+![NVIDIA SM 示意图](../pallas_gpu_nvidia_sm.svg)
 
 更进一步，近期的 CUDA 版本还引入了 _warpgroup_ 的概念，即 4 个连续的 warp。了解硬件结构后，我们可以理解这一概念的由来：4 个连续的 warp 占据 SM 的 4 个象限，使我们能够发射利用整个 SM 的指令。
 
@@ -52,7 +52,7 @@ import jax.experimental.pallas.mosaic_gpu as plgpu
 
 GPU 具有几种不同的 memory space，可以按容量从大到小（以及总带宽和单次访问延迟从慢到快）完全排序。
 
-![NVIDIA GPU memory space 示意图](pallas_gpu_memory_spaces.svg)
+![NVIDIA GPU memory space 示意图](../pallas_gpu_memory_spaces.svg)
 
 最大的 memory space 是 `plgpu.GMEM`，即 _global memory_。在近期的数据中心级 GPU 中，这个 memory space 通常以数十甚至数百 GB 来衡量，但它也是最慢的。
 
@@ -422,7 +422,7 @@ def barrier_scope(barrier_ref):
 
 Blackwell 世代获得了一种执行 MMA 操作的新方式，cluster 中 2 个 SM 的 TensorCore 协作执行单个 MMA 操作。每个 SM 的 `B` 操作数与另一个共享。`D` 和 `A` 操作数是每个 SM 本地的，不共享。
 
-![Collective MMA 中操作数分区示意图](pallas_gpu_collective_mma.svg)
+![Collective MMA 中操作数分区示意图](../pallas_gpu_collective_mma.svg)
 
 这意味着要执行 shape 为 M、N 和 K 的 collective MMA，两个 Pallas 线程中每个的操作数大小应为：`A` 为 `(M // 2, K)`，`B` 为 `(K, N // 2)`，`D`（accumulator）为 `(M // 2, N)`。将两个 accumulator 上下堆叠将恢复执行 MxNxK 矩阵乘法的结果。
 

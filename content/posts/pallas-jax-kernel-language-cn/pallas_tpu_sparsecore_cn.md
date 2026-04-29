@@ -27,7 +27,7 @@ assert pltpu.get_tpu_info().sparse_core is not None, "No SparseCore found"
 
 根据版本不同，一个 TPU 芯片可能包含 2 或 4 个 SparseCore。每个 SparseCore 由多个 subcore 组成，每个 subcore 拥有独立的 VMEM 空间。下图展示了 TPU 内部 SparseCore 的结构：
 
-![SparseCore 架构图](pallas_tpu_sparsecore_diagram.png)
+![SparseCore 架构图](../pallas_tpu_sparsecore_diagram.png)
 
 各组件说明：
 

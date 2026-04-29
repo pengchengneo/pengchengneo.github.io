@@ -127,7 +127,7 @@ Array([ 0,  2,  4,  6,  8, 10, 12, 14], dtype=int32)
 
 `grid` 是一个整数元组（例如 `()`、`(2, 3, 4)` 或 `(8,)`），指定一个迭代空间。例如，grid `(4, 5)` 将有 20 个元素：`(0, 0), (0, 1), ..., (0, 4), (1, 0), ..., (3, 4)`。我们为每个元素运行一次内核函数，这是一种单程序多数据（SPMD）编程风格。
 
-![2D grid 的可视化](pallas_quickstart_grid.png)
+![2D grid 的可视化](../pallas_quickstart_grid.png)
 
 一个 2D grid
 
@@ -202,7 +202,7 @@ $$
 
 为了表达这个模式，我们使用 `BlockSpec`。`BlockSpec` 为每个输入和输出指定块形状，以及一个"索引映射"函数，将一组程序索引映射到块索引。
 
-![BlockSpec 的可视化](pallas_quickstart_blockspec.png)
+![BlockSpec 的可视化](../pallas_quickstart_blockspec.png)
 
 `BlockSpec` 的可视化
 

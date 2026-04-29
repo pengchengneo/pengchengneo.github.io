@@ -5,6 +5,7 @@ draft: false
 tags: ["JAX", "Pallas", "TPU", "GPU", "Kernel"]
 categories: ["TPU"]
 summary: "JAX Pallas 文档完整中文版，覆盖快速入门、Grid/BlockSpec、软件流水线、TPU 内核编写（矩阵乘法、稀疏计算、分布式、SparseCore）、Mosaic GPU 内核编写（Blackwell 矩阵乘法、集合通信）、设计笔记等全部内容"
+hideChildPages: true
 ---
 
 > 原文档：https://docs.jax.dev/en/latest/pallas/
