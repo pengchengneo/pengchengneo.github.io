@@ -272,6 +272,10 @@ Pathways 可以作为 JAX backend 使用。
 
 Pathways 进一步提供 virtual device set，让用户可以指定一组虚拟设备，并把不同 compiled function 放到不同设备集合上。
 
+用户并不需要手写 sub-mesh 之间的 send/recv。Pathways 的 dataflow graph 会记录不同 compiled function 之间的数据依赖；当上游 computation 的输出需要被下游 computation 消费时，runtime 会负责插入必要的数据移动和 resharding。
+
+这里要区分 island 内和 island 间的数据路径。如果两个 virtual device set 最终被 resource manager 放在同一个 TPU island / pod 内，那么大张量数据可以通过 TPU 的 ICI 在 sub-mesh 之间传输；如果 computation 被放在不同 island / pod 上，数据才需要经过 DCN。也就是说，Pathways 暴露给用户的是 logical device set 和 dataflow dependency，而不是底层 ICI/DCN send/recv。
+
 这使得 JAX 程序不仅能表达传统 SPMD，也能表达更复杂的 pipeline 或跨多个 accelerator island 的计算。
 
 ### 6.2 Shardy:MPMD 和 Pathways 的关系
