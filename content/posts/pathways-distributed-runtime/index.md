@@ -1,7 +1,7 @@
 ---
 title: "Pathways：面向下一代大规模 AI 的分布式运行时"
 date: 2026-05-28
-draft: true
+draft: false
 tags: ["Pathways", "JAX", "XLA", "TPU", "分布式训练"]
 categories: ["训练框架"]
 summary: "本文从 PJRT、IFRT、SPMD、MPMD、单控制器和多控制器等概念出发，介绍 Google Pathways 的系统动机与核心设计。"
