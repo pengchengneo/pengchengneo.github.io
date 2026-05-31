@@ -1,5 +1,5 @@
 ---
-title: "Reiner Pope 两期黑板课：从 Token 经济学到 AI 芯片底层"
+title: "(手写笔记) Reiner Pope 两期黑板课：从 Token 经济学到 AI 芯片底层"
 date: 2026-05-25
 draft: false
 tags: ["LLM Inference", "AI Chip", "TPU", "GPU", "Roofline", "Systolic Array"]
@@ -7,6 +7,16 @@ categories: ["AI Hardware"]
 summary: "学习 Dwarkesh Podcast 上 Reiner Pope 两期黑板课：第一期用 Roofline 和 batch size 解释 token 成本、MoE 机架布局、KV cache 与长上下文定价；第二期从逻辑门、MAC、mux 和 systolic array 讲到 GPU/TPU/FPGA/CPU 的架构哲学。"
 math: true
 ---
+
+<div style="display:flex; flex-wrap:wrap; gap:6px; justify-content:center; margin-bottom:1.5em;">
+  <img src="IMG_3115.jpg" style="width:23%; border-radius:4px;" />
+  <img src="IMG_3116.jpg" style="width:23%; border-radius:4px;" />
+  <img src="IMG_3117.jpg" style="width:23%; border-radius:4px;" />
+  <img src="IMG_3118.jpg" style="width:23%; border-radius:4px;" />
+  <img src="IMG_3119.jpg" style="width:23%; border-radius:4px;" />
+  <img src="IMG_3120.jpg" style="width:23%; border-radius:4px;" />
+  <img src="IMG_3121.jpg" style="width:23%; border-radius:4px;" />
+</div>
 
 ## 背景
 
