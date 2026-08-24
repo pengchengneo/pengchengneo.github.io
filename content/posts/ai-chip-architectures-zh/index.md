@@ -119,11 +119,12 @@ summary: "系统比较 NVIDIA GPU、Google TPU、AMD GPU、Cerebras WSE、AWS Tr
 }
 .article-body h3 {
   font-weight: 700;
-  font-style: italic;
-  font-size: 15px;
+  font-style: normal;
+  font-size: 26px;
+  line-height: 1.35;
   color: #1a1a1a;
-  margin-top: 32px;
-  margin-bottom: 8px;
+  margin-top: 52px;
+  margin-bottom: 18px;
 }
 .article-body h3 .heading-logo {
   display: inline-block;
@@ -151,12 +152,13 @@ summary: "系统比较 NVIDIA GPU、Google TPU、AMD GPU、Cerebras WSE、AWS Tr
 }
 .article-body h4 {
   font-weight: 700;
-  font-size: 10.5px;
-  color: #999;
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
-  margin-top: 26px;
-  margin-bottom: 10px;
+  font-size: 21px;
+  line-height: 1.4;
+  color: #292524;
+  text-transform: none;
+  letter-spacing: 0;
+  margin-top: 40px;
+  margin-bottom: 14px;
 }
 .article-body h4 a[data-popup] {
   color: inherit;
@@ -170,12 +172,13 @@ summary: "系统比较 NVIDIA GPU、Google TPU、AMD GPU、Cerebras WSE、AWS Tr
   border-bottom: none;
 }
 .article-body h5 {
-  font-weight: 600;
-  font-size: 12px;
-  font-style: italic;
-  color: #555;
-  margin-top: 20px;
-  margin-bottom: 6px;
+  font-weight: 700;
+  font-size: 17px;
+  line-height: 1.45;
+  font-style: normal;
+  color: #44403c;
+  margin-top: 32px;
+  margin-bottom: 10px;
 }
 .article-body .mesi-key {
   text-align: center;
@@ -703,6 +706,12 @@ summary: "系统比较 NVIDIA GPU、Google TPU、AMD GPU、Cerebras WSE、AWS Tr
 .dark .article-body table th,
 .dark .article-body table td { border-color: #4a4640; }
 .dark .article-body p:has(> img) { color: #b0aa98; }
+.article-body em,
+.article-body h3,
+.article-body h4,
+.article-body h5,
+.article-body .definition-term,
+.translation-notice em { font-style: normal !important; }
 
 </style>
 
@@ -711,7 +720,7 @@ summary: "系统比较 NVIDIA GPU、Google TPU、AMD GPU、Cerebras WSE、AWS Tr
 </div>
 <div class="article-body" data-cta="standard-machines" data-prerendered="true" data-src="/posts/ai-chip-architectures.md"><p>在 2018 <a data-popup="isca">计算机体系结构国际研讨会上</a>， <em><strong><a href="https://en.wikipedia.org/wiki/John_L._Hennessy">John Hennessy</a></strong></em> 和 <em><strong><a href="https://en.wikipedia.org/wiki/David_Patterson_(computer_scientist)">David Patterson</a></strong></em> 发表了他们的 <a data-popup="turing-award">图灵</a> 讲座： <em><strong><a href="https://dl.acm.org/doi/10.1145/3282307">“计算机架构的新黄金时代”</a></strong></em>。 </p>
 <p>在 20 世纪 80 年代， <em><strong>Hennessy</strong></em> 和 <em><strong>Patterson</strong></em> 进行了他们的图灵奖获奖研究，<br/> 单线程CPU性能每年增长52%。到 2018 年，随着 <em><strong><a href="https://en.wikipedia.org/wiki/Moore%27s_law">摩尔定律</a></strong></em> 和 <em><strong><a href="https://en.wikipedia.org/wiki/Dennard_scaling">登纳德缩放</a></strong></em>的结束，该比率为3%。</p>
-<p>需要 <em><strong>特定于域的架构</strong></em> (DSA)。他们的工作示例是 Google 的 <em><strong><a href="https://en.wikipedia.org/wiki/Tensor_Processing_Unit">TPU v1</a></strong></em>，该产品已投入生产：神经网络推理时 CPU 的吞吐量提高了 29 倍，能源效率提高了 80 倍。最后的预测： <em><strong>“未来十年将看到新型计算机架构的寒武纪爆发。”</strong></em></p>
+<p>于是，Domain-Specific Architecture（DSA）成为重要方向。Hennessy 和 Patterson 以 Google 已投入生产的 <strong><a href="https://en.wikipedia.org/wiki/Tensor_Processing_Unit">TPU v1</a></strong> 为例：它的神经网络推理吞吐量是 CPU 的 29 倍，能效则高出 80 倍。最后，他们预测：<strong>“未来十年将迎来计算机架构的寒武纪大爆发。”</strong></p>
 <p>这一预测成真了。如今，已有数十种架构进入严肃开发阶段： <em><strong>GPU</strong></em>、 <em><strong>TPU</strong></em>、 <em><strong>LPU</strong></em>、 <em><strong>NPU</strong></em>、 <em><strong>DPU</strong></em>、 <em><strong>ASIC</strong></em>、 <em><strong>晶圆级引擎</strong></em>、 <em><strong>可重构数据流</strong></em>、 <em><strong>神经形态</strong></em>、 <em><strong>光子计算</strong></em>与 <em><strong>模拟计算</strong></em>。其中相当一部分聚焦于 AI 计算。</p>
 <p>迄今为止已获得实际部署的架构： <em><strong>GPU</strong></em> （NVIDIA、AMD）、 <em><strong>脉动阵列加速器</strong></em> （TPU、Trainium）、 <em><strong>Cerebras 晶圆级引擎</strong></em>和 <em><strong>Groq LPU</strong></em>。</p>
 <p><em><strong>NVIDIA</strong></em> 是明确的领先者； <em><strong>AMD</strong></em> 紧随其后，并分别获得 <a href="https://openai.com/index/openai-amd-strategic-partnership/">OpenAI</a> 和 <a href="https://www.amd.com/en/newsroom/press-releases/2026-2-24-amd-and-meta-announce-expanded-strategic-partnersh.html">Meta</a> 各 6 GW 的部署承诺。 <em><strong>TPU</strong></em> 用于训练 Gemini，并将 <a href="https://www.anthropic.com/news/expanding-our-use-of-google-cloud-tpus-and-services">以多达 100 万颗芯片为 Anthropic 提供服务</a>；Anthropic 还在 <a href="https://techcrunch.com/2026/03/22/an-exclusive-tour-of-amazons-trainium-lab-the-chip-thats-won-over-anthropic-openai-even-apple/">超过一百万颗 <em><strong>Trainium</strong></em> 芯片</a>上运行 Claude。 <em><strong>Cerebras</strong></em> <a href="https://openai.com/index/cerebras-partnership/">现已承载 OpenAI 推理服务</a>； <em><strong>Groq LPU</strong></em> 则通过一笔 <a href="https://www.datacenterdynamics.com/en/news/nvidia-builds-out-lpu-chip-team-following-20bn-groq-acquihire-announcement-rumored-for-gtc/">价值 200 亿美元的 acquihire 交易</a>并入 NVIDIA。</p>
