@@ -707,7 +707,7 @@ summary: "系统比较 NVIDIA GPU、Google TPU、AMD GPU、Cerebras WSE、AWS Tr
 </style>
 
 <div class="translation-notice">
-本文翻译自 Jacob Peake 的 <a href="https://www.jacobpeake.com/ai-chip-architectures"><em>AI Chip Architectures</em></a>，已获得作者的翻译与图片转载授权。原文作者：Jacob Peake；译者：Pengcheng。
+本文翻译自 Jacob Peake 的 <a href="https://www.jacobpeake.com/ai-chip-architectures"><em>AI Chip Architectures</em></a>。原文作者：Jacob Peake；译者：Pengcheng。
 </div>
 <div class="article-body" data-cta="standard-machines" data-prerendered="true" data-src="/posts/ai-chip-architectures.md"><p>在 2018 <a data-popup="isca">计算机体系结构国际研讨会上</a>， <em><strong><a href="https://en.wikipedia.org/wiki/John_L._Hennessy">John Hennessy</a></strong></em> 和 <em><strong><a href="https://en.wikipedia.org/wiki/David_Patterson_(computer_scientist)">David Patterson</a></strong></em> 发表了他们的 <a data-popup="turing-award">图灵</a> 讲座： <em><strong><a href="https://dl.acm.org/doi/10.1145/3282307">“计算机架构的新黄金时代”</a></strong></em>。 </p>
 <p>在 20 世纪 80 年代， <em><strong>Hennessy</strong></em> 和 <em><strong>Patterson</strong></em> 进行了他们的图灵奖获奖研究，<br/> 单线程CPU性能每年增长52%。到 2018 年，随着 <em><strong><a href="https://en.wikipedia.org/wiki/Moore%27s_law">摩尔定律</a></strong></em> 和 <em><strong><a href="https://en.wikipedia.org/wiki/Dennard_scaling">登纳德缩放</a></strong></em>的结束，该比率为3%。</p>
