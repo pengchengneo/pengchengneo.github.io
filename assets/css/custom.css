@@ -34,6 +34,31 @@ body {
   max-width: 56rem;
 }
 
+/* --- 长篇架构综述：为正文、架构图和比较表提供更宽的阅读区 --- */
+.article-centered.article-wide,
+.article-wide .article-content,
+.article-wide #single_header {
+  max-width: 64rem;
+}
+
+@media (min-width: 1536px) {
+  .toc-wide-desktop {
+    display: block !important;
+  }
+  .toc-wide-mobile {
+    display: none !important;
+  }
+}
+
+@media (max-width: 1535px) {
+  .toc-wide-desktop {
+    display: none !important;
+  }
+  .toc-wide-mobile {
+    display: block !important;
+  }
+}
+
 /* --- TOC 固定在屏幕右侧 --- */
 .toc-fixed-right {
   position: fixed;

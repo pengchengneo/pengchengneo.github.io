@@ -1,8 +1,26 @@
 ---
-title: "AI 芯片架构"
+title: "AI 芯片架构全景：GPU、TPU、Trainium、WSE 与 LPU"
 date: 2026-08-24
 draft: false
-showTableOfContents: false
+showTableOfContents: true
+wideContent: true
+manualTableOfContents:
+  - id: "the-problem"
+    title: "问题：AI 计算与内存墙"
+  - id: "nvidia-gpu"
+    title: "NVIDIA GPU"
+  - id: "google-tpu"
+    title: "Google TPU"
+  - id: "amd-gpu"
+    title: "AMD GPU"
+  - id: "cerebras-wse"
+    title: "Cerebras WSE"
+  - id: "aws-trainium"
+    title: "AWS Trainium"
+  - id: "groq-lpu"
+    title: "Groq LPU"
+  - id: "comparison"
+    title: "架构对比"
 tags: ["AI 芯片", "GPU", "TPU", "Trainium", "Cerebras", "Groq"]
 categories: ["AI Infra"]
 summary: "系统比较 NVIDIA GPU、Google TPU、AMD GPU、Cerebras WSE、AWS Trainium 与 Groq LPU 的设计理念、计算与内存架构、扩展方式和软件栈。"
@@ -659,10 +677,10 @@ summary: "系统比较 NVIDIA GPU、Google TPU、AMD GPU、Cerebras WSE、AWS Tr
 @media (max-width: 700px){.article-body h3 {
     scroll-margin-top: 14px;
   }}
-.article-body { max-width: 720px; margin: 0 auto; line-height: 1.75; }
+.article-body { max-width: 64rem; margin: 0 auto; line-height: 1.75; }
 .article-body img:not(.company-logo):not(.heading-logo) { display: block; width: 100%; height: auto; margin: 24px auto 8px; }
 .article-body p:has(> img) { margin-bottom: 20px; color: #666; font-size: 13px; line-height: 1.55; }
-.translation-notice { max-width: 720px; margin: 0 auto 28px; padding: 14px 18px; border-left: 3px solid #b88c4a; background: #f7f5ef; font-size: 14px; line-height: 1.65; }
+.translation-notice { max-width: 64rem; margin: 0 auto 28px; padding: 14px 18px; border-left: 3px solid #b88c4a; background: #f7f5ef; font-size: 14px; line-height: 1.65; }
 @media (prefers-color-scheme: dark) {
   .translation-notice { background: rgba(255,255,255,.06); }
 }

@@ -2,17 +2,18 @@
   {{ .Scratch.Set "scope" "single" }}
   {{ $enableToc := site.Params.article.showTableOfContents | default false }}
   {{ $enableToc = .Params.showTableOfContents | default $enableToc }}
-  {{ $showToc := and $enableToc (in .TableOfContents "<ul") }}
+  {{ $hasToc := or (in .TableOfContents "<ul") .Params.manualTableOfContents }}
+  {{ $showToc := and $enableToc $hasToc }}
   {{ $topClass := cond (hasPrefix site.Params.header.layout "fixed") "top-[140px]" "top-10" }}
 
   {{/* TOC: fixed to right edge, outside main flow */}}
   {{ if $showToc }}
-    <div id="toc-fixed-right" class="toc-fixed-right print:hidden hidden lg:block {{ $topClass }}">
+    <div id="toc-fixed-right" class="toc-fixed-right print:hidden hidden {{ if .Params.wideContent }}toc-wide-desktop{{ else }}lg:block{{ end }} {{ $topClass }}">
       {{ partial "toc.html" . }}
     </div>
   {{ end }}
 
-  <article class="article-centered">
+  <article class="article-centered{{ if .Params.wideContent }} article-wide{{ end }}">
     {{/* Hero */}}
     {{ if .Params.showHero | default (site.Params.article.showHero | default false) }}
       {{ $heroStyle := .Params.heroStyle }}
@@ -43,13 +44,23 @@
 
     {{/* Mobile TOC */}}
     {{ if $showToc }}
-      <details class="toc-inside mt-0 overflow-hidden rounded-lg lg:hidden mb-6">
+      <details class="toc-inside mt-0 overflow-hidden rounded-lg {{ if .Params.wideContent }}toc-wide-mobile{{ else }}lg:hidden{{ end }} mb-6">
         <summary
           class="py-1 text-lg font-semibold cursor-pointer bg-neutral-100 text-neutral-800 ps-4 dark:bg-neutral-700 dark:text-neutral-100">
           {{ i18n "article.table_of_contents" | default "目录" }}
         </summary>
         <div class="py-2 ps-4 border-dotted border-neutral-300 border-s-1 dark:border-neutral-600 prose dark:prose-invert">
-          {{ .TableOfContents | emojify }}
+          {{ with .Params.manualTableOfContents }}
+            <nav id="TableOfContents">
+              <ul>
+                {{ range . }}
+                  <li><a href="#{{ .id }}">{{ .title }}</a></li>
+                {{ end }}
+              </ul>
+            </nav>
+          {{ else }}
+            {{ $.TableOfContents | emojify }}
+          {{ end }}
         </div>
       </details>
     {{ end }}
