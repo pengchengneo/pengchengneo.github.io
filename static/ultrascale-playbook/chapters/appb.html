@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>附录 A1　分布式训练性能分析 — Ultra-Scale Playbook 中文版</title>
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="../index.html">Ultra-Scale Playbook 中文版<span>在 GPU 集群上训练 LLM</span></a>
+  <nav class="chapnav"><a href="appa.html">← 附录 A0</a><span class="chapnav-current">附录 A1　分布式训练性能分析</span><a href="appc.html">附录 A2 →</a><a class="gh-star" href="https://github.com/pengchengneo/ultrascale-playbook-zh-tw" target="_blank" rel="noopener" data-gh-repo="pengchengneo/ultrascale-playbook-zh-tw"><span class="star-ico">★</span><span class="gh-label">Star</span><b class="gh-count" hidden></b></a></nav>
+</header>
+<div class="layout">
+  <aside class="sidebar"><nav id="toc" class="toc"><h2>本章目录</h2></nav></aside>
+  <main class="main">
+    <div id="lab-banner"></div>
+    <article id="content" class="prose"></article>
+    <section id="lab" class="lab" hidden>
+      <h2 class="lab-title">🧪 交互实验室</h2>
+      <div id="lab-intro"></div>
+      <div id="lab-root"></div>
+    </section>
+    <nav class="pager"><a class="prev" href="appa.html"><span class="dir">← 上一章</span><div class="ttl">附录 A0　并行编程速成</div></a><a class="next" href="appc.html"><span class="dir">下一章 →</span><div class="ttl">附录 A2　LLM 训练的典型尺度</div></a></nav>
+    <footer class="pagefoot">本站为简体转换版本，基于 <a href="https://github.com/ai-twinkle">Twinkle AI Community</a>（台湾）的<strong>非官方社群翻译</strong> · 译自 Hugging Face nanotron 团队《<a href="https://huggingface.co/spaces/nanotron/ultrascale-playbook">The Ultra-Scale Playbook</a>》· 原作依 Apache 2.0 发布，译文同授权，仅供学习研究使用。</footer>
+  </main>
+</div>
+<script type="text/markdown" id="chapter-md">
+# 附录 A1　分布式训练性能分析（Distributed Training Profiling）
+
+> 译自 Hugging Face nanotron 团队《The Ultra-Scale Playbook: Training LLMs on GPU Clusters》（Apache 2.0），原文为 [Hugging Face Space](https://huggingface.co/spaces/nanotron/ultrascale-playbook)。
+
+## Kernel
+
+我们先假设 kernel（GPU 运算核心程序）已经整合进 PyTorch。举个简单的例子，可以看看 PyTorch 中以 `torch.nn.functional.layer_norm` 实现的层归一化（layer normalization）函数。要对这个函数底层的 kernel 进行性能分析，有好几种方法。最直接的做法或许是使用 Python 的 `time` 模组。然而，由于 CUDA 操作是异步的，用这种方式量测时间只会捕捉到在 Python 端启动 kernel 的额外开销，而非 kernel 本身实际的执行时间。
+
+为了解决这个问题，我们可以利用 `torch.cuda.Event` 来精确计时，并搭配 `torch.cuda.synchronize()` 指令，确保程序会等到 kernel 执行完毕。以下程序片段示范了这个做法：
+
+```python
+def profile_pytorch(func, input):
+    # 建立 CUDA event 来追踪时间。CUDA 操作是异步的。
+    start = torch.cuda.Event(enable_timing=True)  # 标记开始时间的 event
+    end = torch.cuda.Event(enable_timing=True)    # 标记结束时间的 event
+    # 先暖身（warm up），消除第一次执行带来的额外开销，
+    # 因为那可能无法反映实际性能
+    for _ in range(10):
+        func(input)
+    # 在执行目标函数之前记录开始时间
+    start.record()
+    func(input)  # 呼叫我们要分析的函数
+    # 在函数执行完成后记录结束时间
+    end.record()
+    # 同步 CUDA 操作，确保所有操作都已完成，
+    # 再量测经过的时间
+    torch.cuda.synchronize()
+    # 计算并回传经过的时间（毫秒）
+    return start.elapsed_time(end)
+```
+
+更有效率的分析方式，是使用前文介绍过的 PyTorch profiler。例如，看看以下这段代码：
+
+```python
+import torch
+import torch.nn.functional as F
+
+def pytorch_layer_norm(input):
+    return F.layer_norm(input, input.size()[1:])
+
+a = torch.randn(10000, 10000).cuda()
+
+with torch.profiler.profile(
+    activities=[
+        torch.profiler.ProfilerActivity.CPU,   # 分析 CPU 活动
+        torch.profiler.ProfilerActivity.CUDA,  # 分析 CUDA 活动
+    ],
+    # 定义 profiler 的排程
+    schedule=torch.profiler.schedule(
+        wait=1,      # 先等待 1 个迭代再开始分析
+        warmup=3,    # 暖身 3 个迭代以稳定性能
+        active=2,    # 实际分析 2 个迭代
+        repeat=1,    # 重复此分析排程 1 次
+    ),
+    on_trace_ready=torch.profiler.tensorboard_trace_handler('.'),
+
+) as p:
+    for iter in range(10):
+        pytorch_layer_norm(a)
+        p.step()
+
+# 印出分析结果表格，依 CUDA 总时间排序，只列出前几笔
+print(p.key_averages().table(sort_by="cuda_time_total", row_limit=8))
+```
+
+这会印出依 CUDA 总时间排序的汇总分析结果，输出如下：
+
+![依 CUDA 总时间排序的 PyTorch profiler 汇总结果](../webapp/assets/images/a1_kernels.png)
+
+你也可以如前文所述，在 `chrome://tracing/` 检视 trace（执行轨迹纪录）。
+
+> 💡 **提示**：如果你是第一次使用这个工具，可以用左右方向键在 trace 中移动；此外，按住 **Alt** 键并用滑鼠左右卷动，即可缩放画面。
+
+放大之后，你可以在这份 trace 中观察呼叫 `layer_norm` 时的操作流程：
+
+![layer_norm 呼叫在 trace 中的操作流程](../webapp/assets/images/a1_profile_trace.png)
+
+整个序列从 CPU 端（上半部）开始，先是 `aten::layer_norm`，接着进入 `aten::native_layer_norm`，然后转移到 `cudaLaunchKernel`。再往下就进到 GPU 端，呼叫 `vectorized_layer_norm_kernel` 这个 kernel。
+
+> 📝 **注**：在 profiler 中把 `profile_memory` 设为 `True` 即可启用内存分析。不过，这可能会让 trace 变得更复杂。
+
+PyTorch profiler 能快速提供性能概览，而 **NVIDIA Nsight Compute（`ncu`）** 则能更深入洞察 GPU 性能，包括每个 kernel 的详细执行时间与内存使用量。执行这个 profiler 非常简单：
+
+```bash
+ncu --set full python layer_norm.py
+```
+
+其中 `layer_norm.py` 是一个单纯执行层归一化函数的档案。这个指令会产生日志输出，但若要更有效地可视化结果，可以加上输出旗标：
+
+```bash
+ncu --set full -o output python layer_norm.py
+```
+
+接着用 Nsight Compute 开启 `output.ncu-rep` 档案，你会看到如下的画面，其中有关于计算与内存使用率的明确警告，以及如何让 kernel 在计算与内存之间取得更好的平衡、达到最大占用率（occupancy）的建议：
+
+![Nsight Compute 的分析检视画面](../webapp/assets/images/a1_ncu.png)
+
+## C++ 扩充（CPP extension）
+
+如果你想分析的 kernel 尚未整合进 PyTorch，可以使用 PyTorch 的 `cpp_extension` 模组，轻松编译并执行自订的 CUDA 代码。流程很简单——只要把你的 CUDA kernel 写在 `.cu` 档案里，再用 `cpp_extension` 模组的 `load` 函数在 Python 中载入即可。
+
+以一个简单的 `add` kernel 为例，`.cu` 档案会长这样：
+
+```cpp
+#include <torch/extension.h>
+#include <cuda.h>
+#include <cuda_runtime.h>
+
+__global__ void add_kernel(float* x, float* y, float* output, int size) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < size) {
+        output[index] = x[index] + y[index];
+    }
+}
+
+void add_cuda(torch::Tensor x, torch::Tensor y, torch::Tensor output) {
+    int threads = 1024;
+    int blocks = (x.size(0) + threads - 1) / threads;
+
+    add_kernel<<<blocks, threads>>>(x.data_ptr<float>(), y.data_ptr<float>(), output.data_ptr<float>(), x.size(0));
+}
+
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    m.def("add_cuda", &add_cuda, "Vector addition (CUDA)");
+}
+```
+
+以及用来载入这个 kernel 的 Python 档案：
+
+```python
+import torch
+from torch.utils.cpp_extension import load
+
+# 载入并编译 CUDA 扩充模组
+vector_add = load(
+    name="vector_add",
+    sources=["add_kernel.cu"],
+    verbose=True
+)
+
+# 定义输入张量
+size = 10000
+x = torch.randn(size, device='cuda')
+y = torch.randn(size, device='cuda')
+output = torch.empty(size, device='cuda')
+
+# 执行 CUDA kernel
+vector_add.add_cuda(x, y, output)
+```
+
+透过这种方法，你就可以像先前示范的那样，使用 PyTorch 的 profiler 或 NVIDIA 的工具来分析这个自订 CUDA kernel。
+
+</script>
+<script src="../assets/marked.min.js"></script>
+<script src="../assets/katex/katex.min.js"></script>
+<script src="../assets/katex/auto-render.min.js"></script>
+<script src="../assets/widgets/appb.js"></script>
+<script src="../assets/app.js"></script>
+<script src="../assets/gh-star.js"></script>
+</body>
+</html>

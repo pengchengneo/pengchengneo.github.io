@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>结语　结语与展望 — Ultra-Scale Playbook 中文版</title>
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="../index.html">Ultra-Scale Playbook 中文版<span>在 GPU 集群上训练 LLM</span></a>
+  <nav class="chapnav"><a href="ch10.html">← 第 10 章</a><span class="chapnav-current">结语　结语与展望</span><a href="appa.html">附录 A0 →</a><a class="gh-star" href="https://github.com/pengchengneo/ultrascale-playbook-zh-tw" target="_blank" rel="noopener" data-gh-repo="pengchengneo/ultrascale-playbook-zh-tw"><span class="star-ico">★</span><span class="gh-label">Star</span><b class="gh-count" hidden></b></a></nav>
+</header>
+<div class="layout">
+  <aside class="sidebar"><nav id="toc" class="toc"><h2>本章目录</h2></nav></aside>
+  <main class="main">
+    <div id="lab-banner"></div>
+    <article id="content" class="prose"></article>
+    <section id="lab" class="lab" hidden>
+      <h2 class="lab-title">🧪 交互实验室</h2>
+      <div id="lab-intro"></div>
+      <div id="lab-root"></div>
+    </section>
+    <nav class="pager"><a class="prev" href="ch10.html"><span class="dir">← 上一章</span><div class="ttl">第 10 章　融合内核、Flash Attention 与混合精度</div></a><a class="next" href="appa.html"><span class="dir">下一章 →</span><div class="ttl">附录 A0　并行编程速成</div></a></nav>
+    <footer class="pagefoot">本站为简体转换版本，基于 <a href="https://github.com/ai-twinkle">Twinkle AI Community</a>（台湾）的<strong>非官方社群翻译</strong> · 译自 Hugging Face nanotron 团队《<a href="https://huggingface.co/spaces/nanotron/ultrascale-playbook">The Ultra-Scale Playbook</a>》· 原作依 Apache 2.0 发布，译文同授权，仅供学习研究使用。</footer>
+  </main>
+</div>
+<script type="text/markdown" id="chapter-md">
+# 结语与展望（Conclusion）
+
+> 译自 Hugging Face nanotron 团队《The Ultra-Scale Playbook: Training LLMs on GPU Clusters》（Apache 2.0），原文为 [Hugging Face Space](https://huggingface.co/spaces/nanotron/ultrascale-playbook)。
+
+恭喜你，亲爱的读者，你坚持到了最后！我们一起走完了一段相当漫长的旅程：从理解如何在单一 GPU 上训练一个简单的模型出发，一路走到精通那些用来在数千张 GPU 上高效训练 Llama-405B 与 DeepSeek-V3 这类大型语言模型的各种精妙技术。到了现在，你应该已经能（相对）轻松地读懂像 Llama-3 的 4D 并行化配置这样的架构图了：
+
+![Llama-3 的 4D 并行化配置](../webapp/assets/images/conclusion_llama3_parallelism.png)
+*Llama-3 的 4D 并行化（4D parallelism）配置示意图。*
+
+要协调大规模的 GPU 集群来高效训练 LLM 绝非易事。我们学到了如何优化 GPU 之间的计算与通信，让它们随时都以最高的使用率运转。这牵涉到针对特定的模型与集群规模选择合适的并行化策略、尽可能让通信与计算重叠，以及撰写将硬件布局纳入考量的自订 kernel，让某项运算能在 GPU 上以最快的速度执行。
+
+你或许仍然觉得这些知识有点小众，只跟少数从事 LLM 预训练的人有关。就历史经验来看，过去也许确实如此；但随着 [AI 开发者社群](https://huggingface.co)与模型规模都在快速成长，将分布式技术用于推论、微调与训练的社群也正呈指数级扩大，使得分布式训练环境变得越来越普遍。因此，深入钻研分布式的各种主题，此刻可说是恰逢其时。
+
+这是一段漫长的学习旅程——而且不只对你而言是如此！在 GPU 集群上执行数千次基准测试，比我们原先预期的更具挑战性，因此我们也想和你分享我们自身学习历程中的一些心得亮点。
+
+## 那么，接下来呢？（So, what's next?）
+
+你现在已经对分布式训练的主要概念有了良好的整体认识，但同时，对于其中不少工具与技术，我们也只是浅尝即止。想要深入钻研一个主题有很多途径，以下是我们推荐的几个步骤：
+
+* 仔细研读一些具有里程碑意义或非常新的论文。你可以在「参考文献」（References）中找到一份非常详尽的清单，收录了最具影响力的论文、部落格文章与书籍。
+* 从零开始，亲手实现一个演算法。很多时候，唯有自己动手实现过，一个方法才会真正「豁然开朗」。
+* 投入其中一个被广泛使用的框架并开始贡献：修 bug、回复 issue，或是实现新功能。这是进入任何机器学习领域最好的方式！
+
+我们希望这本书能帮助你踏入分布式训练的世界，并期待你在 GPU 集群的嗡鸣声中，训练出下一世代的出色模型！
+
+---
+
+**最后想对我们的首批读者说几句话**。我们对这部作品相当满意，因此决定发行限量的实体印刷版，作为送给首批读者的礼物。
+
+如果你是最早在下方填写电子邮件地址的前 50 位读者之一，我们会在今年稍晚与你联络，待我们将内容排版为印刷版本后，寄送一本真正的实体书给你。
+
+我们预计这本书大约会有 100 至 150 页，内容与部落格文章相同；不过我们也可能视印刷成书的实际需求，决定加以缩减或扩充。
+
+想索取实体书的话，请在这份 [Google 表单](https://forms.gle/e1GkAShUCtgcwnne8)中填写你的电子邮件地址。
+
+无论你是我们的首批读者，还是在很久之后才读到这篇文章，我们都很高兴看到你喜欢这次的知识分享。愿开源与开放科学的原力，永远与你同在。
+
+## 致谢（Acknowledgements）
+
+我们感谢 [Elie](https://huggingface.co/eliebak) 进行了缜密的审阅，并使用 NotebookLM 制作了音讯内容。特别感谢 [Hynek](https://huggingface.co/hynky) 优化了前端性能。也感谢 [Simon](https://huggingface.co/sbrandeis) 解决了 Hub 上的一些问题。
+
+## 讨论区（Discussion page）
+
+原文在 Hugging Face Space 上设有开放的讨论区。如果你想讨论这篇文章的内容、提出问题、建议修改，或只是想打声招呼，欢迎到[讨论区](https://huggingface.co/spaces/nanotron/ultrascale-playbook/discussions)开启一个讨论串。
+
+</script>
+<script src="../assets/marked.min.js"></script>
+<script src="../assets/katex/katex.min.js"></script>
+<script src="../assets/katex/auto-render.min.js"></script>
+<script src="../assets/widgets/ch11.js"></script>
+<script src="../assets/app.js"></script>
+<script src="../assets/gh-star.js"></script>
+</body>
+</html>

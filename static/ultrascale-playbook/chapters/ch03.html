@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 3 章　张量并行 — Ultra-Scale Playbook 中文版</title>
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="../index.html">Ultra-Scale Playbook 中文版<span>在 GPU 集群上训练 LLM</span></a>
+  <nav class="chapnav"><a href="ch02.html">← 第 2 章</a><span class="chapnav-current">第 3 章　张量并行</span><a href="ch04.html">第 4 章 →</a><a class="gh-star" href="https://github.com/pengchengneo/ultrascale-playbook-zh-tw" target="_blank" rel="noopener" data-gh-repo="pengchengneo/ultrascale-playbook-zh-tw"><span class="star-ico">★</span><span class="gh-label">Star</span><b class="gh-count" hidden></b></a></nav>
+</header>
+<div class="layout">
+  <aside class="sidebar"><nav id="toc" class="toc"><h2>本章目录</h2></nav></aside>
+  <main class="main">
+    <div id="lab-banner"></div>
+    <article id="content" class="prose"></article>
+    <section id="lab" class="lab" hidden>
+      <h2 class="lab-title">🧪 交互实验室</h2>
+      <div id="lab-intro"></div>
+      <div id="lab-root"></div>
+    </section>
+    <nav class="pager"><a class="prev" href="ch02.html"><span class="dir">← 上一章</span><div class="ttl">第 2 章　数据并行</div></a><a class="next" href="ch04.html"><span class="dir">下一章 →</span><div class="ttl">第 4 章　上下文并行</div></a></nav>
+    <footer class="pagefoot">本站为简体转换版本，基于 <a href="https://github.com/ai-twinkle">Twinkle AI Community</a>（台湾）的<strong>非官方社群翻译</strong> · 译自 Hugging Face nanotron 团队《<a href="https://huggingface.co/spaces/nanotron/ultrascale-playbook">The Ultra-Scale Playbook</a>》· 原作依 Apache 2.0 发布，译文同授权，仅供学习研究使用。</footer>
+  </main>
+</div>
+<script type="text/markdown" id="chapter-md">
+# 第 3 章　张量并行（Tensor Parallelism）
+
+> 译自 Hugging Face nanotron 团队《The Ultra-Scale Playbook: Training LLMs on GPU Clusters》（Apache 2.0），原文为 [Hugging Face Space](https://huggingface.co/spaces/nanotron/ultrascale-playbook)。
+
+> 🎧 原文此处附有一段 NotebookLM 主持人讨论本章内容的 podcast 音档，想在阅读时增添听 podcast 氛围的读者，可至[原网页](https://huggingface.co/spaces/nanotron/ultrascale-playbook)聆听。
+
+我们已经用 ZeRO 把模型的参数、梯度与优化器状态（optimizer states）分片了，但一旦激活值（activations）内存超过我们的内存预算，就会碰上极限。欢迎张量并行（tensor parallelism, TP）登场——这个方法不仅切分权重、梯度与优化器状态，也切分激活值，而且在计算之前不需要把它们全部收集起来。听起来简直像美梦成真！让我们先从简单的矩阵乘法来看看张量并行是怎么运作的。
+
+张量并行利用的是矩阵乘法 $A \times B$ 的数学性质。要理解它的运作方式，让我们先检视使这种并行化成为可能的两个基本等式：
+
+$$
+\begin{aligned}
+&\text{1.} \quad A\cdot B = A \cdot \begin{bmatrix} B_1 & B_2 & \cdots \end{bmatrix} = \begin{bmatrix} AB_1 & AB_2 & \cdots \end{bmatrix} \\
+&\text{2.} \quad A\cdot B =\begin{bmatrix} A_1 & A_2 & \cdots \end{bmatrix} \begin{bmatrix} B_1 \\ B_2 \\ \vdots \end{bmatrix} = \sum_{i=1}^n A_i B_i
+\end{aligned}
+$$
+
+这表示我们可以用两种方式计算矩阵乘积：1）分别乘上 $B$ 的每一列（column）；或 2）分别乘上每一行（row），再把结果合并起来。在神经网络中，矩阵乘法更常以 $X \times W$ 的形式表示，其中：
+
+* $X$ 代表输入或激活值
+* $W$ 代表 `nn.Linear` 的权重
+
+实践中，这个运算的一个小例子看起来像这样：
+
+![张量并行的矩阵乘法示意图](../webapp/assets/images/tp_diagram.svg)
+
+让我们看看如何把这个运算并行化！在张量并行中，张量会沿着某个特定维度切成 $N$ 个分片（shard），分散到 $N$ 张 GPU 上。矩阵可以沿列或沿行切分，分别对应列并行与行并行。接下来我们会看到，选择沿列或沿行切分，所需的通信原语（communication primitives）并不相同。
+
+我们的第一个选项是沿列切分（column-wise sharding，也称为**列切分线性层（column-linear）**）：我们把完整的输入矩阵复制到每个 worker 上——这需要一个称为 **broadcast** 的操作——并把权重矩阵沿列切开。接着把输入与各个部分权重矩阵相乘，最后再用 **all-gather** 操作把结果合并起来。
+
+![列切分线性层（column-linear）示意图](../webapp/assets/images/tp_diagram2.png)
+
+以下是列切分张量并行的代码实现：
+
+> 👉 原文此处为可展开的代码区块，内嵌 Picotron 的列切分（column-parallel）TP 实现，可参阅 [picotron/tensor_parallel/tensor_parallel.py#L54-L123](https://github.com/huggingface/picotron/blob/1004ae37b87887cde597c9060fb067faa060bafe/picotron/tensor_parallel/tensor_parallel.py#L54-L123)。
+
+第二个选项称为沿行切分（row-wise sharding，也称为**行切分线性层（row-linear）**）：细心的读者或许已经猜到，行切分意味着我们把权重矩阵切成一条条的行。然而，这也要求我们把输入切开，因此需要的是 **scatter** 操作，而不是列切分时使用的 broadcast。每个 worker 上的结果形状已经正确，但必须加总起来才是最终结果，所以这个情境还需要一次 all-reduce 操作。
+
+我们在这里见到了第四个分布式原语：**scatter**！
+
+![行切分线性层（row-linear）示意图](../webapp/assets/images/tp_diagram3.png)
+
+以下是行切分张量并行的实现：
+
+> 👉 原文此处为可展开的代码区块，内嵌 Picotron 的行切分（row-parallel）TP 实现，可参阅 [picotron/tensor_parallel/tensor_parallel.py#L125-L189](https://github.com/huggingface/picotron/blob/1004ae37b87887cde597c9060fb067faa060bafe/picotron/tensor_parallel/tensor_parallel.py#L125-L189)。
+
+现在我们已经有了 TP 的基本建构元件，接着来看看如何在 Transformer 层里有效地组合它们！
+
+## Transformer 区块中的张量并行
+
+为了想出一套可以依循的策略，让我们从玩具范例走向真实的模型建构区块。Transformer 模型由两种主要的建构区块组成：前馈层（feedforward layers，即多层感知器 MLP）与多头注意力（multi-head attention, MHA）。我们可以对两者都套用张量并行。
+
+前馈部分可以用「列切分线性层接行切分线性层」的方式并行化，这相当于前向传播中一次用来复制输入的 broadcast 与一次 all-reduce。注意在实际训练中并不需要那次 broadcast，因为我们可以确保输入已经在各 TP rank 之间同步。这种配置比先「行切分」再「列切分」更有效率，因为后者在两个切分操作之间需要一次中间的 all-reduce，而前者可以省掉。
+
+![前馈层（MLP）的张量并行配置](../webapp/assets/images/tp_diagram4.png)
+
+既然我们已经为 Transformer 的前馈部分找到了有效率的方案，接着来看看多头注意力区块（MHA）。
+
+我们大致可以采用类似的做法：Q、K、V 矩阵以列并行（column-parallel）方式切分，输出投影则沿行的维度切分。在多头注意力之下，列并行的做法有非常自然的诠释：每个 worker 负责计算单一或一部分注意力头（head）的注意力。同样的做法也适用于[**多查询注意力**（multi-query attention, MQA）](https://arxiv.org/abs/1911.02150)或[**分组查询注意力**（grouped query attention, GQA）](https://arxiv.org/abs/2305.13245)，在这些变体中键（key）与值（value）由多个查询（query）共享。
+
+不过值得注意的是，张量并行度不应超过 Q/K/V 头的数量，因为每个 TP rank 上的头必须保持完整（否则我们无法在每张 GPU 上独立计算注意力，还得引入额外的通信操作）。如果使用的是 GQA，TP 度数实际上应该小于 K/V 头的数量。举例来说，LLaMA-3 8B 有 8 个键／值头，因此张量并行度最好不要超过 8。如果我们对这个模型使用 TP=16，就必须在每张 GPU 上复制 K/V 头，并确保它们保持同步。
+
+![多头注意力与 MLP 的完整张量并行示意图](../webapp/assets/images/tp_full_diagram.png)
+
+最后要注意，张量并行仍然不是训练的万灵丹。我们在模型的计算路径中直接加入了数个分布式通信原语，因此很难（像我们在 ZeRO 中做到的那样）把它们完全隐藏或与计算重叠——最终性能将是「计算与内存收益」和「新增通信开销」之间权衡的结果。让我们用图来说明：
+
+![张量并行中的前向传播](../webapp/assets/images/tp_overlap.svg)
+*张量并行中的前向传播。*
+
+> 透过区块矩阵乘法搭配异步的通信／计算，可以部分隐藏这些通信。
+
+观察张量并行 MLP 的操作时间轴（注意力部分也适用同样的道理），我们能更清楚理解其中的权衡。在每个解码器层的前向传播中，我们会在 all-reduce 操作处碰上一个无法与计算重叠的同步点。这种*暴露通信*（exposed communication）开销是必要的，因为必须先在张量并行的各 rank 之间合并部分结果，才能套用最后的 LayerNorm。
+
+> 举例来说，Megatron-LM／Nanotron 实现了 all-gather 与 FC1 计算的部分重叠：矩阵乘法结果的一部分开始传送到其他 GPU 的同时，另一部分仍在计算中。
+
+张量并行确实有助于降低矩阵乘法的激活值内存，因为中间激活值被分片到多张 GPU 上。然而，像 LayerNorm 这样的操作仍然需要收集完整的激活值，这表示我们没有拿到原本可以获得的全部内存好处。此外，TP 引入了相当可观的通信需求，其代价高度取决于网络基础设施。这个特定的 all-reduce 无法完全隐藏在计算之后，意味着它会直接计入前向传播的关键路径（critical path）。
+
+> 这个领域仍是活跃的研究方向，近期如 Domino 等工作正在探索最大化这种重叠的新技术。
+
+让我们更仔细看看随着 TP 度数扩大时的权衡：
+
+> 🔬 原文此处为交互图表（TP 度数扩大时每张 GPU 的吞吐量与最大可行批次大小的变化），可至[原网页](https://huggingface.co/spaces/nanotron/ultrascale-playbook)体验，下图为对应的静态版本。
+
+![TP 扩展时的吞吐量与最大批次大小](../webapp/assets/images/tp_scaling.svg)
+
+提高 TP 虽然会降低每张 GPU 的吞吐量（左图），却能处理更大的批次大小（右图），呈现出分布式训练中计算效率与内存可用性之间的权衡。
+
+实践中，正如上方左图所示，张量并行的通信开销在规模超过 8 张 GPU 之后变得格外明显。单一节点内的张量并行可以利用高速的 NVLink 互连，但跨节点就必须走较慢的网络连线。从 TP=8 到 TP=16 我们观察到明显的下滑，而从 TP=16 到 TP=32 的下滑更为陡峭。在更高的并行度下，通信开销会高到很快就压过计算时间。
+
+话虽如此，张量并行借由把模型参数、梯度、优化器状态以及（某种程度上的）激活值分散到多张 GPU 上，为内存用量带来重要的好处。让我们在一个 70B 参数的模型上检视这个效果：
+
+> 🔬 原文此处为交互图表（70B 模型在不同 TP 度数下的各类内存用量），可至[原网页](https://huggingface.co/spaces/nanotron/ultrascale-playbook)体验，下图为对应的静态版本。
+
+![不同 TP 度数下 70B 模型的内存用量](../webapp/assets/images/tp_memoryusage.svg)
+
+提高张量并行度能降低每张 GPU 上模型参数、梯度与优化器状态所需的内存，直到我们开始能把一个大模型装进单一节点的 8 张 GPU 里。
+
+有没有办法从这项技术获得更多好处呢？我们已经看到，层归一化（layer normalization）与 dropout 仍然需要在每张 GPU 上收集完整的激活值，部分抵销了内存节省。我们可以做得更好——只要找到方法，把这些剩下的操作也并行化。
+
+> 📝 **注**：关于张量并行训练中的层归一化，有一点很有意思——由于每个 TP rank 在 all-gather 之后看到的是相同的激活值，LayerNorm 的权重在反向传播后其实不需要 all-reduce 来同步梯度：它们天然就会在各 rank 之间保持一致。不过对 dropout 操作而言，我们必须确保各 TP rank 之间的随机种子（random seed）同步，以维持行为的确定性。
+
+接下来，让我们探索张量并行的一个小而自然的延伸，称为**序列并行**（sequence parallelism），它做的正是这件事。
+
+## 序列并行（Sequence Parallelism）
+
+**序列并行（sequence parallelism, SP）**是指针对模型中张量并行（TP）未处理的部分——例如 Dropout 与 LayerNorm——切分其激活值与计算，但切分的方向是沿着输入的序列维度，而不是隐藏维度（hidden dimension）。
+
+> 📝 **注**：「序列并行」这个术语有点过载：本节所说的序列并行与张量并行紧密耦合，适用于 dropout 与层归一化操作。然而，当我们之后处理更长的序列时，注意力计算会成为瓶颈，这需要 Ring Attention 之类的技术——它们有时也被称为*序列并行*，但为了区分这两种做法，我们会把后者称为*上下文并行*（context parallelism）。所以之后每次看到「序列并行」，请记得它是与张量并行搭配使用的（相对地，上下文并行则可以独立使用）。
+
+之所以需要这么做，是因为这些操作需要存取完整的隐藏维度才能正确计算。举例来说，LayerNorm 需要完整的隐藏维度来计算平均值与变异数：
+
+$$
+\text{LayerNorm}(x) = \gamma \cdot \frac{x - \mu}{\sqrt{\sigma^2 + \epsilon}} + \beta
+$$
+
+其中 $\mu = \text{mean}(x)$ 与 $\sigma^2 = \text{var}(x)$ 是沿着隐藏维度 $h$ 计算的。
+
+因此，即使这些操作在计算上很便宜，它们仍然需要可观的激活值内存，因为它们需要完整的隐藏维度。SP 让我们改沿序列维度切分，把这份**内存**负担分片到多张 GPU 上。
+
+实践中，我们会从左图过渡到右图：
+
+![TP 与 TP/SP 的过渡示意图](../webapp/assets/images/tp_sp_diagram.png)
+*前向传播中：f = no-op；f\* = all-reduce；g = all-gather；g\* = reduce-scatter。反向传播中：f = all-reduce；f\* = no-op；g = reduce-scatter；g\* = all-gather。SP 区域需要完整的 hidden_dim。*
+
+这张图显示了我们如何利用不同的集体通信操作（标记为「f」与「g」）在张量并行区域与序列并行区域之间过渡。关键挑战在于有效率地管理这些过渡，同时维持低内存用量并确保正确性。
+
+在前向传播中：
+
+* 「f」是 no-op（不做任何操作），因为激活值已经在各 rank 之间重复存在
+* 「f\*」是 all-reduce，用来同步激活值并确保正确性
+
+在反向传播中：
+
+* 「f\*」是 no-op，因为梯度已经在各 rank 之间重复存在
+* 「f」是 all-reduce，用来同步梯度
+
+「f」与「f\*」这对操作被称为**共轭**（conjugate）配对，因为它们彼此互补——当其中一个在前向是 no-op 时，另一个在反向就是 all-reduce，反之亦然。
+
+至于序列并行（SP），我们使用标记为「g」与「g\*」的不同操作。具体来说，我们会避免在 SP 区域使用 all-reduce，因为那需要收集完整的激活值，会推高峰值内存用量，违背了 SP 的初衷。
+
+那么这里究竟发生了什么事？就像某个著名的 LLM 会说的：让我们一步一步来看（step by step）：
+
+**最初的 LayerNorm（SP 区域）**
+
+* 输入张量 $X_1^*$ 与 $X_2^*$（形状 $(b, s/2, h)$）进入 LayerNorm，已沿序列维度切分
+* 每张 GPU 在自己的序列片段上独立计算 LayerNorm，得到 $Y_1^*$ 与 $Y_2^*$
+
+**第一次过渡（SP → TP）**
+
+* 「g」操作（all-gather）把 $Y_1^*$ 与 $Y_2^*$ 合并回完整的序列长度
+* 恢复出 $Y$（形状 $(b, s, h)$），因为列切分线性层需要完整的隐藏维度 $h$
+
+**第一个线性层（TP 区域）**
+
+* $A_1$ 是列切分线性层，因此会沿隐藏维度切分 $Y$
+* GeLU 在每张 GPU 上独立套用
+* $Z_1^*$ 的形状为 $(b, s, h/2)$
+
+**第二个线性层（TP 区域）**
+
+* $B_1$ 是行切分线性层，因此会恢复隐藏维度
+* $W_1$ 的形状为 $(b, s, h)$
+
+**最后的过渡（TP → SP）**
+
+* 「g\*」操作（reduce-scatter）：一边为前面的行切分线性层完成正确性所需的 reduce，一边沿序列维度 scatter
+* $W_1^*$ 的形状为 $(b, s/2, h)$
+
+![TP/SP 区域过渡的放大示意图](../webapp/assets/images/tp_sp_diagram_zoomed.png)
+
+序列并行的一大优势在于，它降低了我们需要储存的最大激活值尺寸。如果只用张量并行，我们必须在多个位置储存形状为 $(b, s, h)$ 的激活值；有了序列并行，最大激活值尺寸就降为 $\frac{b \cdot s \cdot h}{tp}$，因为我们总是沿着序列维度或隐藏维度其中之一切分。
+
+要记住 TP 与 TP/SP 中各部分不同的切分方式有点困难——相信我们，我们自己也觉得很难对应——所以我们做了这张小表，总结激活值（也就是 `hidden_states`）的形状在前向传播过程中沿隐藏维度 $h$ 与序列维度 $s$ 的变化：
+
+| 区域 | 仅 TP | TP 搭配 SP |
+|---|---|---|
+| 进入 TP（列切分线性层） | $h$：分片（`weight_out` 为分片）<br>$s$：完整 | $h$：分片（`weight_out` 为分片）<br>$s$：**all-gather** 成完整 |
+| TP 区域 | $h$：分片<br>$s$：完整 | $h$：分片<br>$s$：完整 |
+| 离开 TP（行切分线性层） | $h$：完整（`weight_out` 为完整 + 为正确性做 **all-reduce**）<br>$s$：完整 | $h$：完整（`weight_out` 为完整 + 为正确性做 **reduce-scatter**）<br>$s$：**reduce-scatter** 成分片 |
+| SP 区域 | $h$：完整<br>$s$：完整 | $h$：完整<br>$s$：分片 |
+
+而对嵌入层（embedding layer）而言：
+
+| 区域 | 纯 TP（vanilla TP） | TP 搭配 SP |
+|---|---|---|
+| 嵌入层（行切分线性层，沿词汇表切分） | $h$：完整（`weight_out` 为完整 + 为正确性做 **all-reduce**）<br>$s$：完整 | $h$：完整（`weight_out` 为完整 + 为正确性做 **reduce-scatter**）<br>$s$：**reduce-scatter** 成分片 |
+
+借由序列并行，我们能达成更大的激活值内存节省，让批次大小与序列长度得以推进到只用张量并行时无法达到的程度。来看看这对我们先前的 70B 模型范例意味着什么：
+
+> 🔬 原文此处为交互图表（70B 模型在 TP/SP 之下、不同序列长度时的内存用量），可至[原网页](https://huggingface.co/spaces/nanotron/ultrascale-playbook)体验，下图为对应的静态版本。
+
+![TP/SP 下 70B 模型的内存用量](../webapp/assets/images/tp_sp_memoryusage.svg)
+
+如图所示，我们再次大幅降低了每张 GPU 的最大内存用量，让我们能在 TP/SP=16 之下容纳 16k token 的序列长度，比纯 TP 的情况更进一步！（如前一节所见，TP=16 还是有点大，但我们会在下一节看到如何改进。）
+
+你可能会问自己：使用 TP+SP 是否比纯 TP 产生更多通信？嗯，可以说是，也可以说不是。在纯 TP 的前向传播中，每个 Transformer 区块有两次 all-reduce；而在 SP 中，每个 Transformer 区块有两次 all-gather 与两次 reduce-scatter。所以 SP 的通信操作次数是 TP 的两倍。但由于一次 all-reduce 操作可以拆解为一次 all-gather 加一次 reduce-scatter（见附录的〈Ring AllReduce 快速聚焦〉一节），两者在通信上其实是等价的。反向传播的推理也相同，因为我们只是使用每个操作的共轭（no-op ↔ all-reduce、all-gather ↔ reduce-scatter）。
+
+如果你一直很专心，就会注意到我们谈的是每层 4 次通信操作（注意力 2 次、MLP 2 次）。使用张量并行＋序列并行时，MLP 的性能剖析（profiling）看起来是这样：
+
+![TP+SP 下 MLP 的性能剖析](../webapp/assets/images/tp_sp_overlap.svg)
+
+和纯 TP 一样，TP+SP 也不容易与计算重叠，这使得吞吐量高度依赖通信带宽。同样和纯 TP 一样，TP+SP 通常只会在单一节点内进行（让 TP 度数不超过每个节点的 GPU 数，例如 TP≤8）。
+
+我们可以实际量测这种通信开销在张量并行扩大时如何变得越来越棘手。让我们在一个 3B 模型、序列长度 4096 的设定下，量测 TP 搭配 SP 扩大时的吞吐量与内存使用率：
+
+> 🔬 原文此处为交互图表（3B 模型、序列长度 4096 下，TP 搭配 SP 扩大时的吞吐量与内存容量），可至[原网页](https://huggingface.co/spaces/nanotron/ultrascale-playbook)体验，下图为对应的静态版本。
+
+![TP/SP 扩展时的吞吐量与内存容量](../webapp/assets/images/tp_sp_scaling.svg)
+
+这里同样存在计算效率（左图）与内存容量（右图）之间的权衡：更高的并行度虽然借由降低激活值内存而能处理明显更大的批次大小，却也会降低每张 GPU 的吞吐量——尤其是在超过「每个节点的 GPU 数」这个门槛之后。
+
+让我们总结一下观察到的现象：
+
+* 对这两种方法而言，最大的性能下滑都出现在从 TP=8 移到 TP=16 的时候，因为那正是通信从单一节点之内（NVLink）跨入节点之间（EFA）的时刻
+* 使用 TP 搭配 SP 时的激活值内存节省，让我们能容纳比只用 TP 时大得多的批次
+
+**我们已经看到 TP 如何借由沿隐藏维度切分注意力与前馈操作，把激活值分片到多张 GPU 上；也看到 SP 如何沿序列维度切分其余的操作，成为 TP 的自然互补。**
+
+> 📝 **注**：由于 SP 区域中的 LayerNorm 作用在序列的不同部分上，它们的梯度在各 TP rank 之间会不一样。为了确保权重保持同步，我们需要在反向传播时对它们的梯度做 all-reduce，就像 DP 确保权重同步的方式一样。不过这只是很小的通信开销，因为 LayerNorm 的参数相对很少。
+
+然而，TP 与 SP 有两个限制：1）如果我们扩大序列长度，TP 区域的激活值内存仍然会爆增；2）如果模型大到 TP=8 也装不下，我们就会因为跨节点的连线而遭遇大幅度的变慢。
+
+问题 1）可以用上下文并行（context parallelism）来解决，问题 2）则可以用流水线并行（pipeline parallelism）来解决。让我们先来看看上下文并行！
+
+</script>
+<script src="../assets/marked.min.js"></script>
+<script src="../assets/katex/katex.min.js"></script>
+<script src="../assets/katex/auto-render.min.js"></script>
+<script src="../assets/widgets/ch03.js"></script>
+<script src="../assets/app.js"></script>
+<script src="../assets/gh-star.js"></script>
+</body>
+</html>

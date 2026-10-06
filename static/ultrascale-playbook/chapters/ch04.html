@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 4 章　上下文并行 — Ultra-Scale Playbook 中文版</title>
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="../index.html">Ultra-Scale Playbook 中文版<span>在 GPU 集群上训练 LLM</span></a>
+  <nav class="chapnav"><a href="ch03.html">← 第 3 章</a><span class="chapnav-current">第 4 章　上下文并行</span><a href="ch05.html">第 5 章 →</a><a class="gh-star" href="https://github.com/pengchengneo/ultrascale-playbook-zh-tw" target="_blank" rel="noopener" data-gh-repo="pengchengneo/ultrascale-playbook-zh-tw"><span class="star-ico">★</span><span class="gh-label">Star</span><b class="gh-count" hidden></b></a></nav>
+</header>
+<div class="layout">
+  <aside class="sidebar"><nav id="toc" class="toc"><h2>本章目录</h2></nav></aside>
+  <main class="main">
+    <div id="lab-banner"></div>
+    <article id="content" class="prose"></article>
+    <section id="lab" class="lab" hidden>
+      <h2 class="lab-title">🧪 交互实验室</h2>
+      <div id="lab-intro"></div>
+      <div id="lab-root"></div>
+    </section>
+    <nav class="pager"><a class="prev" href="ch03.html"><span class="dir">← 上一章</span><div class="ttl">第 3 章　张量并行</div></a><a class="next" href="ch05.html"><span class="dir">下一章 →</span><div class="ttl">第 5 章　流水线并行</div></a></nav>
+    <footer class="pagefoot">本站为简体转换版本，基于 <a href="https://github.com/ai-twinkle">Twinkle AI Community</a>（台湾）的<strong>非官方社群翻译</strong> · 译自 Hugging Face nanotron 团队《<a href="https://huggingface.co/spaces/nanotron/ultrascale-playbook">The Ultra-Scale Playbook</a>》· 原作依 Apache 2.0 发布，译文同授权，仅供学习研究使用。</footer>
+  </main>
+</div>
+<script type="text/markdown" id="chapter-md">
+# 第 4 章　上下文并行（Context Parallelism）
+
+> 译自 Hugging Face nanotron 团队《The Ultra-Scale Playbook: Training LLMs on GPU Clusters》（Apache 2.0），原文为 [Hugging Face Space](https://huggingface.co/spaces/nanotron/ultrascale-playbook)。
+
+有了张量并行（tensor parallelism, TP）与序列并行（sequence parallelism, SP），我们已经能大幅降低每颗 GPU 的内存需求，因为模型权重与激发值（activations）都分散到多颗 GPU 上了。然而，当我们要在越来越长的序列上训练模型（例如每条序列扩展到 128k 个以上的 token）时，仍可能超出单一节点的可用内存，因为在 TP 区域内部，我们依然得处理完整长度的序列。
+
+此外，即使我们对激发值采用完整重算（full recomputation）——这会带来约 30% 的沉重计算负担——我们仍需在内存中保留层边界处的部分激发值，而这些激发值会随序列长度线性成长。让我们来看看上下文并行（context parallelism, CP）能帮上什么忙：
+
+> 🔬 原文此处为交互图表（8B 模型在不同上下文并行度下的内存用量），可至[原网页](https://huggingface.co/spaces/nanotron/ultrascale-playbook)体验。
+
+上下文并行的核心想法，是把类似序列并行的做法（也就是沿着序列长度切分）套用到我们已经施加张量并行的那些模组上。如此一来，这些模组会沿着两个维度切分，从而也降低了序列长度带来的影响。走过前面这些内容之后，你应该会觉得这个做法相当直观……但其中有个诀窍，所以请保持清醒！
+
+采用上下文并行时，就像序列并行一样，我们沿着序列维度切分输入；但这次我们把这个切分套用到整个模型，而不是像先前 TP + SP 那样，只切在模型的序列并行区域。
+
+切分序列并不影响 MLP、LayerNorm 等大多数模组，因为其中每个 token 都是独立处理的。它也不像 TP 需要昂贵的通信，因为被切分的只有输入，而不是权重矩阵。和数据并行（data parallelism）一样，在算完梯度之后，我们会发起一次 all-reduce 操作，在上下文并行群组内同步梯度。
+
+不过有一个重要的例外：我们得特别「注意」**注意力区块**（attention blocks）（哈哈……双关语无误 :D）。在注意力模组中，每个 token 都需要存取来自**所有**其他序列 token 的键／值对（key/value pairs）；就算是因果注意力（causal attention），至少也得关注每一个先前的 token。
+
+由于上下文并行是沿着序列维度把输入切分到多颗 GPU 上，注意力模组将需要 GPU 之间的完整通信，来交换所需的键／值数据。
+
+如果我们天真地直接这么做，代价听起来相当昂贵。有没有办法把这件事做得又省又快呢？幸好有：有一项核心技术能让我们有效率地处理这些键／值对的通信，它就叫做**环状注意力（Ring Attention）**。
+
+> 📝 **注**：上下文并行与 FlashAttention（后文会再详细介绍）在概念上有些相似——两者都依赖线上 Softmax（online softmax）计算来降低内存用量。差别在于 FlashAttention 专注于优化单颗 GPU 上的注意力计算本身，而上下文并行则是透过把序列分散到多颗 GPU 上来达成内存的缩减。
+
+### 初探环状注意力（Ring Attention）
+
+在这种注意力机制的实现中，每颗 GPU 会先发起一个异步通信操作，把自己的键／值对送往其他 GPU。在等待其他 GPU 数据的同时，它会对手上已有的那部分数据计算注意力分数。理想情况下，在这轮计算结束之前，就能从另一颗 GPU 收到下一份键／值对，让这颗 GPU 一算完就能立刻展开下一轮计算。
+
+让我们把这个过程具体画出来。假设我们有 4 颗 GPU、输入为 4 个 token。一开始，输入序列沿着序列维度均匀切分，因此每颗 GPU 只会拿到一个 token 及其对应的 Q/K/V 值。假设 Q1、K1、V1 分别代表第一个 token 的查询（query）、键（key）与值（value），它们位于第 1 颗 GPU 上。整个注意力计算需要 4 个时间步才能完成。在每个时间步中，每颗 GPU 依序执行以下三个操作：
+
+1. 以非阻塞（non-blocking）的方式，把「目前的键与值」送给下一台机器（最后一个时间步除外），如此我们就能在这一步还没结束前，先展开后续的步骤。
+2. 在本地对手上已有的「目前的键与值」计算注意力分数，这通常就是计算 $Softmax(\frac{QK^T}{\sqrt{d}}) * V$。
+3. 等待从前一颗 GPU 收到键与值，然后回到步骤 1，此时「目前的键与值」就换成刚刚从前一颗 GPU 收到的键／值。
+
+我们把这 3 个步骤执行四次，就能完成整个注意力计算。
+
+以 4 颗 GPU 进行的完整流程如下面的动画所示：
+
+![ring-attention.gif](../webapp/assets/images/ring-attention.gif)
+*4 颗 GPU 以环状方式传递键／值对、同时计算注意力的完整过程动画。*
+
+看了这个动画，你大概就一目了然作者为什么把这个方法命名为「环状注意力」了。
+
+不过这里有个大问题：环状注意力的天真实现，会因为因果注意力矩阵的形状，造成 GPU 之间严重的负载不均。让我们透过带有因果注意力遮罩（causal attention mask）的注意力分数矩阵，来检视 Softmax 的计算：
+
+![cp_attnmask.svg](../webapp/assets/images/cp_attnmask.svg)
+*天真的顺序切分下，因果注意力遮罩对应的注意力分数矩阵：各 GPU 分到的计算量严重不均。*
+
+Softmax 是逐列（row-wise）计算的，也就是说，只要某颗 GPU 收齐了某一列的所有 token，那一列就可以开始计算。我们可以看到，GPU 1 可以立刻计算，因为它一开始就握有 token 1–4，完全不需要从其他任何 GPU 接收资讯。然而 GPU 2 得等到第二轮才能收到 token 1–4，才凑齐 token 1–8 的所有值。而且，GPU 1 的工作量看起来也远比其他所有 GPU 少得多。
+
+让我们看看能不能把计算分配得更平均一些：
+
+### 锯齿环状注意力（Zig-Zag Ring Attention）——计算平衡的实现
+
+我们需要更好的输入序列分配方式。做法是不再把 token 纯粹按顺序指派给各 GPU，而是稍微打散排列顺序，让每颗 GPU 上都均匀混有前段与后段的 token。这个方法称为锯齿注意力（Zig-Zag Attention）。在这种新的排列下，注意力遮罩会呈现均匀分布的计算量；只要数一数涂色方格的数量，你就会发现计算现在已经平均分摊到所有 GPU 上了。
+
+> 📝 **注**：我们这里展示的是锯齿注意力（Zig-Zag Attention），它与条纹注意力（Striped Attention）略有差异；关于两者差异的细节，可参考[这则 GitHub 讨论](https://github.com/zhuzilin/ring-flash-attention/issues/2#issuecomment-2236746166)。
+
+![cp_zigzagmask.svg](../webapp/assets/images/cp_zigzagmask.svg)
+*锯齿排列下的注意力遮罩：计算量已平均分摊到所有 GPU。*
+
+同时我们也会发现，若要完成所有的列，每颗 GPU 都需要来自其他所有 GPU 的资讯。
+
+要让计算与通信重叠，一般有两种做法：一是执行一次整体的 all-gather，同时把所有 KV 重新聚集到每颗 GPU 上（类似 ZeRO-3 的方式）；二是依需求逐一从各 GPU 收集到各 GPU 上：
+
+![cp_overlap_allgather.svg](../webapp/assets/images/cp_overlap_allgather.svg)
+*All-gather 实现：一次同时收齐所有键／值对。*
+
+![cp_overlap_all2all.svg](../webapp/assets/images/cp_overlap_all2all.svg)
+*All-to-all（环状）实现：以环状模式一次交换一个区块的键／值对。*
+
+这两种实现的关键差异，在于它们的通信模式与内存用量：
+
+**1. All-gather 实现：**
+
+* 所有 GPU 同时向其他所有 GPU 收集完整的键／值对
+* 需要较多暂存内存，因为每颗 GPU 必须一次存放完整的 KV 对
+* 通信一步到位，但内存开销较大
+
+**2. All-to-all（环状）实现：**
+
+* GPU 以类似环状的模式交换 KV 对，一次一个区块
+* 内存效率较佳，因为每颗 GPU 一次只需暂存一个额外的区块
+* 通信被分散开来并与计算重叠，不过多次通信步骤会带来一些额外的基础延迟开销
+
+整体而言，all-to-all 做法以稍微复杂一点的通信模式为代价，换得较佳的内存效率；all-gather 做法则较为简单，但在注意力计算期间需要较多的暂存内存。
+
+到目前为止，我们已经看到如何在单一节点内用 TP 切分模型来驯服大型模型，也看到可以用 CP 来驯服长序列造成的激发值爆炸。
+
+然而，我们也知道 TP 难以跨节点扩展，那么当模型权重连一个节点都不容易塞下时，该怎么办呢？这时就轮到另一个并行维度——我们的第四种并行方式：**流水线并行（Pipeline Parallelism）**——出场救援了！
+
+</script>
+<script src="../assets/marked.min.js"></script>
+<script src="../assets/katex/katex.min.js"></script>
+<script src="../assets/katex/auto-render.min.js"></script>
+<script src="../assets/widgets/ch04.js"></script>
+<script src="../assets/app.js"></script>
+<script src="../assets/gh-star.js"></script>
+</body>
+</html>

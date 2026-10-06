@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 1 章　第一步：单 GPU 训练 — Ultra-Scale Playbook 中文版</title>
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="../index.html">Ultra-Scale Playbook 中文版<span>在 GPU 集群上训练 LLM</span></a>
+  <nav class="chapnav"><a href="ch00.html">← 导论</a><span class="chapnav-current">第 1 章　第一步：单 GPU 训练</span><a href="ch02.html">第 2 章 →</a><a class="gh-star" href="https://github.com/pengchengneo/ultrascale-playbook-zh-tw" target="_blank" rel="noopener" data-gh-repo="pengchengneo/ultrascale-playbook-zh-tw"><span class="star-ico">★</span><span class="gh-label">Star</span><b class="gh-count" hidden></b></a></nav>
+</header>
+<div class="layout">
+  <aside class="sidebar"><nav id="toc" class="toc"><h2>本章目录</h2></nav></aside>
+  <main class="main">
+    <div id="lab-banner"></div>
+    <article id="content" class="prose"></article>
+    <section id="lab" class="lab" hidden>
+      <h2 class="lab-title">🧪 交互实验室</h2>
+      <div id="lab-intro"></div>
+      <div id="lab-root"></div>
+    </section>
+    <nav class="pager"><a class="prev" href="ch00.html"><span class="dir">← 上一章</span><div class="ttl">导论　导论与全书鸟瞰</div></a><a class="next" href="ch02.html"><span class="dir">下一章 →</span><div class="ttl">第 2 章　数据并行</div></a></nav>
+    <footer class="pagefoot">本站为简体转换版本，基于 <a href="https://github.com/ai-twinkle">Twinkle AI Community</a>（台湾）的<strong>非官方社群翻译</strong> · 译自 Hugging Face nanotron 团队《<a href="https://huggingface.co/spaces/nanotron/ultrascale-playbook">The Ultra-Scale Playbook</a>》· 原作依 Apache 2.0 发布，译文同授权，仅供学习研究使用。</footer>
+  </main>
+</div>
+<script type="text/markdown" id="chapter-md">
+# 第 1 章　第一步：单 GPU 训练（First Steps: Training on one GPU）
+
+> 译自 Hugging Face nanotron 团队《The Ultra-Scale Playbook: Training LLMs on GPU Clusters》（Apache 2.0），原文为 [Hugging Face Space](https://huggingface.co/spaces/nanotron/ultrascale-playbook)。
+
+> 🎧 原文此处为 Podcast 音讯播放器：若想为阅读增添 Podcast 氛围，可一边阅读、一边聆听 NotebookLM 主持人讨论本书前几节内容的对谈，请至[原网页](https://huggingface.co/spaces/nanotron/ultrascale-playbook)体验。
+
+在开始扩展到多 GPU 之前，让我们先快速回顾模型训练最基本的概念。当模型在单一 GPU 上训练时，训练通常包含三个步骤：
+
+1. 前向传播（forward pass）：将输入通过模型以产生输出；
+2. 反向传播（backward pass）：计算梯度；
+3. 优化步骤（optimization step）：使用梯度来更新参数。
+
+正如我们稍后会看到的，这些步骤可能会重复或彼此交错，但现在我们先从简单的情况开始。
+
+整体流程大致如下：
+
+> 🔬 原文此处为交互图表（单 GPU 训练三步骤的网络示意图，可将滑鼠悬停在网络元件上检视细节），可至[原网页](https://huggingface.co/spaces/nanotron/ultrascale-playbook)体验。
+
+在这张图中，最上排的方块可以视为模型内部依序排列的各层（最下排也一样），红色方块则是各层对应的梯度，在反向传播期间计算出来。
+
+**批次大小（batch size，$bs$）**是模型训练的重要超参数之一，会同时影响模型收敛与吞吐量。
+
+在训练初期，较小的批次大小有助于快速在训练地形（training landscape）中移动，抵达较佳的学习点。然而到了训练后段，小批次会让梯度一直带有杂讯，模型可能无法收敛到最理想的最终性能。另一个极端则是，大批次虽然能给出非常精确的梯度估计，却往往无法充分利用每一个训练词元（token），使收敛变慢，还可能浪费运算资源。关于这个主题，OpenAI 的大批次训练论文，以及 MiniMax-01 [技术报告](https://filecdn.minimax.chat/_Arxiv_MiniMax_01_Report.pdf)的第 4.2 节，都有很好的早期讨论。
+
+举例来说，在 DeepSeek-V3/R1 的训练中，「批次大小在前 469B 个词元的训练期间，从 3,072 个输入序列逐步增加到 15,360，其余的训练则维持在 15,360 个输入样本」。
+
+批次大小也会影响在给定文字数据集上训练所需的时间：批次较小时，要训练相同数量的样本就需要更多优化器步骤。优化器步骤的成本（以运算时间计）很高，因此相较于使用较大的批次，总训练时间会随之增加。话虽如此，请注意批次大小通常可以在最佳值附近做相当大幅度的调整，而不会对模型性能造成重大影响——也就是说，在最佳批次大小附近，最终模型性能对确切批次大小数值的敏感度通常相当低。
+
+在 LLM 预训练社群中，批次大小通常以词元数而非样本数来表示（$bst$ = batch size tokens，词元批次大小），这让训练数据通常与训练时实际使用的输入序列长度无关。
+
+在最简单的情况（单机训练）下，$bs$（以样本计）与 $bst$ 可以由模型输入序列长度（$seq$）计算如下：
+
+$$
+bst = bs * seq
+$$
+
+从这里开始，我们将以样本为单位来呈现批次大小的公式，但你随时可以将它乘上序列长度，换算成以词元为单位的对应值。
+
+近期 LLM 训练的甜蜜点通常落在每批次约 400 万到 6,000 万个词元。批次大小与训练语料规模多年来持续成长：Llama 1 以约 400 万词元的批次大小训练了 1.4 兆个词元，而 DeepSeek 则以约 6,000 万词元的批次大小训练了 14 兆个词元。
+
+**而当我们把模型训练扩展到这么大的批次时，第一个挑战已经迎面而来：内存不足（out-of-memory，OOM）问题。当 GPU 的内存不足以容纳目标批次大小的完整批次时，我们该怎么办？**
+
+让我们先快速了解一开始导致内存不足的原因，这将帮助我们对训练模型的内存需求建立一些有用的直觉。
+
+## 内存使用剖析（Memory usage in Transformers）
+
+训练神经网络模型时，我们会在内存中储存以下几类项目：
+
+* 模型权重
+* 模型梯度
+* 优化器状态（optimizer states）
+* 计算梯度所需的激活（activations）
+
+> 📝 **注**：你可能以为模型的内存需求可以精确算出来，但有几项额外的内存占用让精确计算变得困难：
+>
+> * CUDA kernel 通常需要 1–2 GB 的 GPU 内存。你可以执行 `import torch; torch.ones((1, 1)).to("cuda")`，再用 `nvidia-smi` 查看 GPU 内存，快速验证这一点。
+> * 还有一些剩余的内存用量来自缓冲区（buffer）与中间结果，以及部分因碎片化（fragmentation）而无法使用的内存。
+>
+> 我们会忽略后两项因素，因为它们通常是较小且固定的常数项。
+
+这些项目以张量形式储存，而张量有不同的「形状」与「精度」。「形状」由批次大小、序列长度、模型隐藏维度、注意力头数、词汇表大小，以及我们稍后会看到的模型切分（sharding）等超参数决定。「精度」指的是 FP32、BF16、FP8 等格式，分别需要 4、2、1 个位元组来储存张量中的每一个数值。我们会在「混合精度训练」一节完整讨论各种精度及其取舍；目前只需记住，这些格式的内存需求各不相同，会影响我们所需储存项目的内存用量。
+
+那么，要如何从这些变数快速判断内存使用量呢？一个简单的方法就是凭经验直接测量。
+
+### 分析内存用量（Profiling the memory usage）
+
+利用 PyTorch 分析器（profiler），我们可以了解内存在整个训练过程中是如何配置的。可以看到，内存使用并不是静态的，无论在整个训练期间还是在单一训练步骤之内都变化很大：
+
+想了解如何分析你的模型，请参阅〈A1：分布式训练分析（A1: Distributed Training Profiling）〉的完整导览。
+
+> 🔬 原文此处为交互图表（内存 profiler 时间轴，显示训练前几个步骤中权重、梯度、优化器状态与激活的内存用量随时间的变化），可至[原网页](https://huggingface.co/spaces/nanotron/ultrascale-playbook)体验。
+
+显然，第一个步骤看起来与后续步骤非常不同，但我们先来看看一个步骤的一般结构：首先，随着前向传播的进行，激活快速增加；接着在反向传播期间，梯度逐步累积起来，而随着反向传播的推进，用来计算梯度的已储存激活会被逐步清除。最后，我们执行优化步骤——此时需要所有的梯度——然后更新优化器状态，才开始下一次前向传播。
+
+为什么第一个步骤看起来不一样？激活快速增加后停滞了一段时间。这是因为在第一个步骤中，torch 缓存配置器（cache allocator）做了大量准备工作，预先安排好内存配置，让后续步骤不必再搜寻可用的内存区块，从而加快速度（参见 [Zach 的部落格](https://zdevito.github.io/2022/08/04/cuda-caching-allocator.html)）。在第一个步骤之后，我们也会看到优化器状态出现，这通常会垫高后续训练步骤的内存用量。
+
+你是否注意过，有时训练在第一步能成功，却在后续的训练步骤中发生 OOM？这可以用第一步之后优化器状态的累积来解释。
+
+现在我们对内存有了初步的认识，接下来会看到：扩展训练规模，往往就是在把上述各种项目（激活、参数、梯度、优化器状态）的内存需求控制在 GPU 内存限制之内的同时，设法最大化运算效率的课题。
+
+### 权重／梯度／优化器状态的内存（Weights/grads/optimizer states memory）
+
+先从清单中的前三项开始：模型的权重、梯度与优化器状态。其实我们可以相当容易地估算它们所需的内存。
+
+对于一个简单的 Transformer LLM，参数数量可由[下列公式](https://michaelwornow.net/2024/01/18/counting-params-in-transformer)给出：
+
+$$
+N = h * v + L * (12 * h^2 + 13 * h) + 2*h
+$$
+
+由于我们不使用固定位置嵌入（positional embedding），公式中排除了位置嵌入的参数量。
+
+在这个式子中，$h$ 是隐藏维度，$v$ 是词汇表大小，$L$ 是模型的层数。观察这个式子可以发现，在隐藏维度较大时占主导地位的是 $h^2$ 这一项，因为随着参数规模扩大，它是唯一以平方成长的项。
+
+参数与梯度的内存需求，就是参数数量乘以每个参数所需的位元组数。在传统的全精度（FP32）训练中，参数和梯度都各需要 4 个位元组；而优化器如果使用 Adam，还需要储存动量（momentum）与变异数（variance），每个参数又各增加两个 4 位元组。总结如下：
+
+$$
+\begin{aligned}
+& m_{params} = 4 * N \\
+& m_{grad} = 4 * N \\
+& m_{opt} = (4+4) * N
+\end{aligned}
+$$
+
+接着看看改用较低精度时情况会如何改变。基于稳定性的考量（见后文的混合精度训练一节），我们通常不采用完全的低精度训练，而是混用较高与较低精度，称为「混合精度（mixed precision）」。目前混合精度训练的预设做法，通常是大多数运算使用 BF16——每个参数与梯度各需要 2 个位元组——同时额外保存一份 FP32 的模型权重与梯度副本，因此每个参数总共需要 12 个位元组。除了参数与梯度之外，我们还需要储存优化器状态：对 Adam 优化器而言，需要动量与变异数，为了数值稳定性通常以 FP32 储存，各占 4 个位元组。
+
+后文介绍 ZeRO 方法时会有更多细节。
+
+摘要如下：
+
+$$
+\begin{aligned}
+& m_{params} = 2 * N \\
+& m_{grad} = 2 * N \\
+& m_{params\_fp32} = 4 * N \\
+& m_{opt} = (4+4) * N
+\end{aligned}
+$$
+
+> 📝 **注**：有些函数库以 FP32 储存梯度，这需要额外 $m_{params\_fp32} = 4 * N$ 的内存。例如 nanotron 就是这么做的，因为 `bf16` 对较小的数值是有损的，而我们始终以稳定性为优先。详情参见[这则 DeepSpeed issue](https://github.com/microsoft/DeepSpeed/issues/1773)。
+
+> 📝 **注**：参数的 FP32 副本（$m_{params\_fp32}$）在文献与代码中有时称为「主权重（master weights）」。
+
+有趣的是，混合精度本身并不会节省整体内存，它只是把内存以不同的方式分配到这三个组成部分；而且如果我们以 FP32 累积梯度，实际上还比全精度训练多出 4 个位元组。它仍然是有利的做法，因为以半精度计算前向／反向传播能让我们（1）使用 GPU 上经过优化、速度更快的低精度运算，并且（2）降低前向传播期间的激活内存需求——如同上下图表所示，这是内存用量的一大部分。
+
+让我们感受一下一个模型大致需要多少内存（全精度与混合精度给出的总量相同）：
+
+| **模型参数量** | **FP32，或 BF16 不含 FP32 梯度累积** | **BF16 含 FP32 梯度累积** |
+|---|---|---|
+| 1B | 16 GB | 20 GB |
+| 7B | 112 GB | 140 GB |
+| 70B | 1120 GB | 1400 GB |
+| 405B | 6480 GB | 8100 GB |
+
+改用 FP8 训练取代 BF16 能进一步降低内存用量，但稳定性较差，目前仍是非常活跃的研究主题（见[这则推文](https://x.com/xariusrke/status/1826669126955278401)），我们稍后会更详细地介绍。
+
+可以看到，模型一旦达到 **7B**（！），权重与优化器的需求就开始显著累加，并超过一般 GPU 的内存容量（例如 H100 GPU 的 80 GB）。
+
+不过现在，先让我们从仍然放得进单一 GPU 的模型开始，看看内存预算中的最后一个大户：激活内存。
+
+### 激活内存（Activations memory）
+
+激活内存比权重、梯度和优化器状态更难计算，部分原因在于它取决于模型的输入。如果你不确定为什么反向传播需要储存激活，[这份参考数据](https://www.determined.ai/blog/act-mem-2)是很好的快速复习。仔细检视反向传播的计算方式之后，我们可以估算混合精度下激活所需的总内存，得到以下方程序：
+
+$$
+m_{act} = L \cdot seq \cdot bs \cdot h \cdot (34 + \frac{5 \cdot n_{heads} \cdot seq}{h})
+$$
+
+式中 $L$ 是层数，$seq$ 是序列长度，$bs$ 是以样本计的批次大小，$h$ 是模型的隐藏维度，$n_{heads}$ 是注意力头数。
+
+至于这些数字的精确推导，可以参考 NVIDIA 那篇关于重算的原始论文——基本上就是对 Transformer 层中每个运算之间所有中间激活的大小逐一记帐。
+
+这里有个有趣的观察：对于给定的模型，内存用量并非固定不变，而是随批次大小线性成长、随序列长度平方成长。这表示当我们增大批次或以更长的序列训练时，激活内存正是会爆炸的那一部分。我们可以用这个方程序来观察不同序列长度下内存用量的变化，例如以 Llama 系列模型为例（`bs=1`）：
+
+> 🔬 原文此处为交互图表（Llama 各尺寸模型在不同序列长度下，参数、梯度、优化器状态与激活内存用量的比较图），可至[原网页](https://huggingface.co/spaces/nanotron/ultrascale-playbook)体验。
+
+这张图说明了一个鲜明的事实：对短序列（或者类似地，小批次）而言，激活几乎可以忽略不计；但从大约 2k–4k 个词元开始，激活便开始占据可观的内存，而参数、梯度与优化器状态的用量（我们稍后会讨论）则大致与序列长度和批次大小无关。
+
+**对于大量输入词元（也就是大批次／长序列）而言，激活将成为远超其他项目的最大内存负担。**
+
+有没有办法驯服这种「激活爆炸」呢？好问题，读者！
+
+是时候介绍我们的第一项技术了——**激活重算（activation recomputation）**——它能帮助我们控制激活内存的占用上限，是当今大模型训练工具箱中不可或缺的工具。
+
+## 激活重算（Activation recomputation）
+
+**激活重算**——也称为*梯度检查点（gradient checkpointing）*或*重新实体化（rematerialization）*——背后的基本想法是：在前向传播期间丢弃部分激活以节省内存，并在反向传播期间额外花费一些运算，即时把这些激活重新算出来。若不使用重算，我们会储存每两个可学习运算（例如前馈层、LayerNorm 等）之间的所有隐藏状态，以便在反向传播期间用它们来计算梯度。使用重算时，我们通常只会在模型架构的少数几个关键点储存激活，丢弃其余的激活，并在反向传播期间从最近的已存激活即时重算——基本上就是再执行一小段前向传播，以内存换取运算。整体看起来大致如下：
+
+> 🔬 原文此处为交互图表（激活重算的前向／反向流程示意图，可将滑鼠悬停在网络元件上检视细节），可至[原网页](https://huggingface.co/spaces/nanotron/ultrascale-playbook)体验。
+
+选择要储存哪些关键激活，有以下几种策略：
+
+* **完全重算（Full）**：我们在 Transformer 模型每一层之间的转换点设置激活检查点。这通常称为 `full` 策略，因为它需要对每一层各做一次前向传播，等于在反向传播期间额外加上一次完整的前向传播。这种策略最省内存，但运算成本也最高，通常会使运算成本与时间增加多达 30–40%，非常有感。
+* **选择性重算（Selective）**：一般而言，我们可以做得比完全重算更好。重算论文的作者做了细致的分析，研究哪些激活成长得最大、而以 FLOPs 计的重算成本又最便宜。结果发现注意力（attention）运算正属于这一类，因此我们通常可以丢弃它们，把检查点集中在昂贵的前馈（feedforward）运算上。对 GPT-3（175B）模型而言，这意味着**以 2.7% 的运算成本换取 70% 的激活内存削减**。
+
+在 DeepSeek V3 等近期模型中即采用了选择性检查点，透过所谓的「多头潜在注意力（Multi-Head Latent Attention，MLA）」储存尺寸更小的注意力激活，以优化激活内存用量。
+
+让我们看看在实践中，重算策略能多大幅度地降低内存占用，以及选择性重算如何在节省内存与重算成本之间取得漂亮的平衡：
+
+> 🔬 原文此处为交互图表（各种重算策略在不同模型尺寸与序列长度下的内存占用比较图），可至[原网页](https://huggingface.co/spaces/nanotron/ultrascale-playbook)体验。
+
+这里还能清楚看到另一个趋势：长序列的激活对较小的模型影响更大，因此重算的效果也变得更加显著。
+
+> 📝 **注**：当你在衡量训练设定对 GPU/TPU/加速器的使用效率时，通常要把重算纳入考量来计算总 FLOPS（每秒浮点运算次数），并与 GPU/TPU/加速器的理论最大 FLOPS 比较。计算一个训练步骤的 FLOPS 时把重算算进去，得到的值称为「硬件 FLOPS（hardware FLOPS）」，也就是加速器上实际执行的运算数量。将这个数字除以训练步骤的时间长度与加速器的最大 FLOPS，就得到**硬件 FLOPS 使用率（Hardware FLOPS Utilization，HFU）**。
+>
+> 然而，到头来真正重要的是模型在给定数据集上从头到尾的训练时间。所以在比较各种 GPU/TPU/加速器时，如果其中一种加速器提供了足够的内存、可以跳过重算，因此每秒执行的运算较少（HFU 较低）却能更快完成训练，那它应该得到奖励而非惩罚。因此，另一种做法是计算所谓的**模型 FLOPS 使用率（Model FLOPS Utilization，MFU）**：与 HFU 不同，它只计入模型前向＋反向传播所需的运算，不把重算计入测得的 FLOPs。这个数值因此更贴近模型本身，而非训练的具体实现。
+
+现今大多数训练框架都使用 FlashAttention（我们会在后文进一步介绍），它在其优化策略中原生整合了激活重算：在反向传播时重算注意力分数与矩阵，而不是储存它们。因此，大多数使用 Flash Attention 的人其实已经在使用选择性重算了。
+
+**如你现在所理解的，激活重算因为重算而稍微增加了 FLOPs 数量，却大幅降低了内存存取的开销。**
+
+这种取舍在高速内存较小的硬件（例如 GPU）上特别有利，因为存取内存通常比执行运算更慢。尽管涉及额外的运算，整体效果往往是计算反而更快，此外内存占用也大幅降低。
+
+现在我们学会了重算，就能如前面图表所示，驯服激活的内存用量了！
+
+然而，激活对批次大小仍然是线性相依的，而上面长条图中的所有分析都是在 `bs=1` 下进行的，所以当我们迈向更大的批次时，它可能再次成为问题。别绝望，我们的工具箱里还有第二件工具——**梯度累积（gradient accumulation）**来救场！
+
+## 梯度累积（Gradient accumulation）
+
+梯度累积是避免内存爆炸的一种非常直接的方法：把批次切分成多个微批次（micro-batch），依序对每个微批次执行前向与反向传播并计算梯度，然后如其名所示，在执行优化器步骤之前，把所有微批次的梯度加总起来。实践中，优化步骤不是对梯度的总和、而是对梯度的平均值进行，如此一来结果就与梯度累积步数无关。
+
+我们把每次前向传播的批次大小称为`微批次大小`（micro batch size，$mbs$），把两次优化器步骤之间的整体批次大小称为`全局批次大小`（global batch size，$gbs$）。如果我们每 8 次前向／反向传播才执行一次优化器步骤，`全局批次大小`就是`微批次大小`的 8 倍。
+
+我们现在所称的`全局批次大小`，就对应到目前为止为了简化而一直简称为`批次大小`的东西（我们现在让术语更精确，以避免歧义）。
+
+使用梯度累积时，全局批次大小可以简单地计算如下：
+
+$$
+bs = gbs = mbs \times grad\_acc
+$$
+
+梯度累积让我们能在内存占用维持不变的情况下，把批次大小有效地增加到无限大（甚至更大！）。梯度累积也与激活重算相容，可以进一步降低内存。
+
+![梯度累积示意图](../webapp/assets/images/gradaccumulation_diag.png)
+
+使用梯度累积意味着我们需要保留梯度累积缓冲区，它们会在整个训练步骤中持续存在；而不使用梯度累积时，反向传播中的梯度是在释放激活内存的同时计算的，因此峰值内存较低。
+
+梯度累积让我们每次只计算部分批次（也就是微批次），得以降低随批次大小线性成长的激活内存。
+
+**不过有一个缺点：梯度累积在每个优化步骤需要多次连续的前向／反向传播，因而增加运算负担并拖慢训练。天下没有白吃的午餐！**
+
+但如果你有仔细跟上，应该已经注意到：各微批次的前向／反向传播其实可以并行执行。前向／反向传播彼此独立，唯一的差别只是输入样本不同。看来，是时候把我们的训练扩展到不只一颗 GPU 了！
+
+在那之前，让我们先快速看看如何把运算与通信可视化——简短导览分布式训练工具箱中最有用的工具之一：**分析器（profiler）**。这个工具对于理解与验证 GPU 之间的通信与运算如何进行、瓶颈出在哪里，将会极其有用。
+
+### 分析 GPU 运算与通信（Profiling GPU compute and communication）
+
+PyTorch 的[分析器](https://pytorch.org/tutorials/recipes/recipes/profiler_recipe.html)让我们能精确追踪并可视化训练期间 CPU 与 GPU 上所发生的一切。它原生整合于 PyTorch 中。让我们看看如何使用：
+
+```python
+with torch.profiler.profile(
+    activities=[
+        torch.profiler.ProfilerActivity.CPU,
+        torch.profiler.ProfilerActivity.CUDA,
+    ],
+    schedule=torch.profiler.schedule(wait=1, warmup=1, active=3),
+    on_trace_ready=torch.profiler.tensorboard_trace_handler('./log/profile'),
+    with_stack=True
+) as prof:
+    for step in range(steps):
+        train_step()
+        prof.step()
+```
+
+这会产生一份追踪纪录（trace），可以在 TensorBoard 或 Chrome 的 trace viewer 中可视化。追踪纪录会显示：
+
+* CPU 线程异步地向 GPU 发送 kernel
+* 多条 CUDA 串流（stream）并行处理运算与通信
+* kernel 执行时间与内存配置
+
+![profile_trace_annotated.png](../webapp/assets/images/profile_trace_annotated.png)
+*范例追踪纪录：CPU 线程异步地向 GPU 发送 kernel，运算 kernel 与通信在不同的 CUDA 串流上并行进行*
+
+追踪纪录有助于找出以下这类瓶颈：
+
+* 本可重叠执行、却循序进行的运算与通信
+* GPU 等待数据传输的闲置时间
+* CPU 与 GPU 之间的内存搬移
+* 来自 CPU 的 kernel 发送负担（launch overhead）
+
+理解这些模式，对于优化分布式训练性能至关重要。举例来说，我们稍后将讨论的梯度同步是否与反向传播的运算妥善重叠，追踪纪录就能清楚地显示出来。
+
+现在，让我们换一台配备多颗 GPU 的更大工作站 🖥️，开始研究我们的第一项扩展技术：**数据并行（data parallelism）**——我们将会看到，*它其实就是梯度累积的并行版本*。
+
+</script>
+<script src="../assets/marked.min.js"></script>
+<script src="../assets/katex/katex.min.js"></script>
+<script src="../assets/katex/auto-render.min.js"></script>
+<script src="../assets/widgets/ch01.js"></script>
+<script src="../assets/app.js"></script>
+<script src="../assets/gh-star.js"></script>
+</body>
+</html>

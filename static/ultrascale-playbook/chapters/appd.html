@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>附录 A3　计算／通信重叠的数学 — Ultra-Scale Playbook 中文版</title>
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="../index.html">Ultra-Scale Playbook 中文版<span>在 GPU 集群上训练 LLM</span></a>
+  <nav class="chapnav"><a href="appc.html">← 附录 A2</a><span class="chapnav-current">附录 A3　计算／通信重叠的数学</span><a href="references.html">参考资源 →</a><a class="gh-star" href="https://github.com/pengchengneo/ultrascale-playbook-zh-tw" target="_blank" rel="noopener" data-gh-repo="pengchengneo/ultrascale-playbook-zh-tw"><span class="star-ico">★</span><span class="gh-label">Star</span><b class="gh-count" hidden></b></a></nav>
+</header>
+<div class="layout">
+  <aside class="sidebar"><nav id="toc" class="toc"><h2>本章目录</h2></nav></aside>
+  <main class="main">
+    <div id="lab-banner"></div>
+    <article id="content" class="prose"></article>
+    <section id="lab" class="lab" hidden>
+      <h2 class="lab-title">🧪 交互实验室</h2>
+      <div id="lab-intro"></div>
+      <div id="lab-root"></div>
+    </section>
+    <nav class="pager"><a class="prev" href="appc.html"><span class="dir">← 上一章</span><div class="ttl">附录 A2　LLM 训练的典型尺度</div></a><a class="next" href="references.html"><span class="dir">下一章 →</span><div class="ttl">参考资源　参考资源</div></a></nav>
+    <footer class="pagefoot">本站为简体转换版本，基于 <a href="https://github.com/ai-twinkle">Twinkle AI Community</a>（台湾）的<strong>非官方社群翻译</strong> · 译自 Hugging Face nanotron 团队《<a href="https://huggingface.co/spaces/nanotron/ultrascale-playbook">The Ultra-Scale Playbook</a>》· 原作依 Apache 2.0 发布，译文同授权，仅供学习研究使用。</footer>
+  </main>
+</div>
+<script type="text/markdown" id="chapter-md">
+# 附录 A3　计算／通信重叠的数学（Math for Compute/Communication Overlap）
+
+> 译自 Hugging Face nanotron 团队《The Ultra-Scale Playbook: Training LLMs on GPU Clusters》（Apache 2.0），原文为 [Hugging Face Space](https://huggingface.co/spaces/nanotron/ultrascale-playbook)。
+
+利用前一节的公式，我们可以估算分布式训练中计算与通信在什么情况下能有效重叠。让我们以数据并行（ZeRO-0）为例。
+
+## 数据并行的通信分析（Data Parallelism Communication Analysis）
+
+需要通信的梯度总大小为：
+
+- 梯度 = 参数 ≈ $num\_layers \cdot 16h^2$
+
+在反向传播期间，这些梯度会以桶（bucket，预设大小 25 MB）为单位进行通信。对每个桶执行 all-reduce 的通信时间为：
+
+$$
+t_{comm} = t_{comm\_bucket} = \frac{bucket\_size \cdot 2(DP-1)}{DP \cdot peak\_bw}
+$$
+
+> 📝 **注**：在带宽计算方面，我们采用 [NCCL 文件](https://github.com/NVIDIA/nccl-tests/blob/master/doc/PERFORMANCE.md#summary)中的汇流排带宽（bus bandwidth）公式。这些公式在计算 GPU 之间的有效带宽时，把特定的通信模式纳入了考量。
+
+反向传播的计算时间为：
+
+$$
+t_{compute} = \frac{4 \cdot num\_tokens \cdot num\_params}{peak\_flops}
+$$
+
+要达到有效重叠，我们需要：
+
+$$
+\frac{t_{comm}}{t_{compute}} = \frac{num\_params}{2 \cdot num\_tokens} \cdot \frac{DP-1}{DP} \cdot \frac{peak\_flops}{peak\_bw} \leq 1
+$$
+
+这个比值有助于判断通信是否会成为训练的瓶颈。当比值小于 1 时，通信就能完全与计算重叠。
+
+## ZeRO-3（FSDP）的通信分析（ZeRO-3 (FSDP) Communication Analysis）
+
+在 ZeRO-3 中，参数与梯度会分片（shard）到各个 GPU 上。针对一个每个 transformer 区块有 $16h^2$ 个参数的模型，让我们分析其通信模式：
+
+- 前向传播中的每个 transformer 区块：
+  - All-gather 参数：每个 rank $16h^2/DP$ 位元组
+- 反向传播中的每个 transformer 区块：
+  - All-gather 参数：每个 rank $16h^2/DP$ 位元组
+  - Reduce-scatter 梯度：每个 rank $16h^2/DP$ 位元组
+- 每个区块的总通信量：$3 \cdot 16h^2/DP$ 位元组
+- 完整模型的总通信量：$3 \cdot num\_layers \cdot 16h^2/DP$ 位元组
+
+All-gather 操作的通信时间为：
+
+$$
+t_{comm} = 16h^2 \cdot \frac{DP-1}{DP \cdot peak\_bw}
+$$
+
+单一 decoder 层前向传播的计算时间为：
+
+$$
+t_{compute} = \frac{2 \cdot seq\_len \cdot mbs \cdot (16 \cdot h^2)}{peak\_flops} = \frac{32 \cdot seq\_len \cdot mbs \cdot h^2}{peak\_flops}
+$$
+
+要让计算与通信有效重叠，我们需要：
+
+$$
+\frac{t_{comm}}{t_{compute}} = \frac{1}{2 \cdot seq\_len \cdot mbs} \cdot \frac{DP-1}{DP} \cdot \frac{peak\_flops}{peak\_bw} \leq 1
+$$
+
+当这个比值小于 1 时，下一层参数的通信就能隐藏在当前这一层的计算背后。
+
+## TP 的通信分析（TP Communication Analysis）
+
+在张量并行（Tensor Parallelism, TP）中，激活值会在线性层运算期间分片到各个 GPU 上。让我们分析其通信模式：
+
+- 前向传播中的每个 column-linear 运算：
+  - All-gather 激活值：每个 rank $seq \cdot mbs \cdot h/TP$ 位元组
+- 反向传播中的每个 column-linear 运算：
+  - Reduce-scatter 梯度：每个 rank $seq \cdot mbs \cdot h/TP$ 位元组
+- Row-linear 运算则反过来。每个 transformer 区块有 2 个 column-linear 与 2 个 row-linear 运算。
+- 每个区块的总通信量：$8 \cdot seq \cdot mbs \cdot h/TP$ 位元组
+- 完整模型的总通信量：$8 \cdot num\_layers \cdot seq \cdot mbs \cdot h/TP$ 位元组
+
+让我们分析能否把某一层的 all-gather 通信与下一个线性层的计算重叠。All-gather 操作的通信时间为：
+
+$$
+t_{comm} = \frac{seq \cdot mbs \cdot h \cdot (TP-1)}{TP \cdot peak\_bw}
+$$
+
+而下一个线性层（参数量为 $h^2$）的计算时间为：
+
+$$
+t_{compute} = \frac{2 \cdot seq \cdot mbs \cdot h^2}{TP \cdot peak\_flops}
+$$
+
+要达到有效重叠，我们希望通信时间小于计算时间：
+
+$$
+\frac{t_{comm}}{t_{compute}} = \frac{TP-1}{2 \cdot h} \cdot \frac{peak\_flops}{peak\_bw} \leq 1
+$$
+
+这个比值告诉我们，能否成功地把 all-gather 通信隐藏在下一个线性层的计算背后。有趣的是，这个比值只取决于隐藏维度 $h$ 与张量并行度 $TP$，与序列长度或批次大小无关。
+
+## PP 的通信分析（PP Communication Analysis）
+
+在流水线并行（Pipeline Parallelism, PP）中，激活值与梯度会在流水线阶段（pipeline stage）之间传递。让我们分析其通信模式：
+
+- 前向传播中的每个微批次：
+  - 接收并传送激活值：$2 \cdot seq \cdot mbs \cdot h$ 位元组
+- 反向传播中的每个微批次：
+  - 接收并传送梯度：$2 \cdot seq \cdot mbs \cdot h$ 位元组
+- 每个微批次的总通信量：$4 \cdot seq \cdot mbs \cdot h$ 位元组
+- 若考虑梯度累积步数（$gas$），总通信量为：$4 \cdot gas \cdot seq \cdot mbs \cdot h$ 位元组
+
+让我们分析能否把激活值／梯度的通信与下一个 transformer 区块的计算重叠。下一个流水线阶段中 transformer 区块的计算时间为：
+
+$$
+t_{compute} = \frac{32 \cdot seq \cdot mbs \cdot h^2 \cdot num\_layers\_in\_next\_pp}{peak\_flops}
+$$
+
+而 P2P 传输的通信时间为：
+
+$$
+t_{comm} = \frac{seq \cdot mbs \cdot h}{peak\_bw}
+$$
+
+要达到有效重叠，我们希望：
+
+$$
+\frac{t_{comm}}{t_{compute}} = \frac{peak\_flops}{32 \cdot h \cdot num\_layers\_in\_next\_pp \cdot peak\_bw} \leq 1
+$$
+
+与 TP 类似，这个比值与序列长度和批次大小无关。它取决于隐藏维度 $h$、下一个流水线阶段的层数，以及硬件的计算能力与 P2P 带宽能力之间的比值。
+
+## 引用方式（Citation）
+
+如需在学术情境中引用本作品，请以下列格式标注：
+
+```
+Tazi et al., "The Ultra-Scale Playbook: Training LLMs on GPU Clusters", 2025.
+```
+
+BibTeX 引用格式：
+
+```bibtex
+@misc{ultrascale_playbook,
+      title={The Ultra-Scale Playbook: Training LLMs on GPU Clusters},
+      author={Nouamane Tazi, Ferdinand Mom, Haojun Zhao, Phuc Nguyen, Mohamed Mekkouri, Leandro Werra, Thomas Wolf},
+      year={2025},
+}
+```
+
+</script>
+<script src="../assets/marked.min.js"></script>
+<script src="../assets/katex/katex.min.js"></script>
+<script src="../assets/katex/auto-render.min.js"></script>
+<script src="../assets/widgets/appd.js"></script>
+<script src="../assets/app.js"></script>
+<script src="../assets/gh-star.js"></script>
+</body>
+</html>

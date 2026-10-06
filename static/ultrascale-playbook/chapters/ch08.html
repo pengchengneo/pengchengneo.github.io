@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 8 章　寻找最佳训练配置 — Ultra-Scale Playbook 中文版</title>
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="../index.html">Ultra-Scale Playbook 中文版<span>在 GPU 集群上训练 LLM</span></a>
+  <nav class="chapnav"><a href="ch07.html">← 第 7 章</a><span class="chapnav-current">第 8 章　寻找最佳训练配置</span><a href="ch09.html">第 9 章 →</a><a class="gh-star" href="https://github.com/pengchengneo/ultrascale-playbook-zh-tw" target="_blank" rel="noopener" data-gh-repo="pengchengneo/ultrascale-playbook-zh-tw"><span class="star-ico">★</span><span class="gh-label">Star</span><b class="gh-count" hidden></b></a></nav>
+</header>
+<div class="layout">
+  <aside class="sidebar"><nav id="toc" class="toc"><h2>本章目录</h2></nav></aside>
+  <main class="main">
+    <div id="lab-banner"></div>
+    <article id="content" class="prose"></article>
+    <section id="lab" class="lab" hidden>
+      <h2 class="lab-title">🧪 交互实验室</h2>
+      <div id="lab-intro"></div>
+      <div id="lab-root"></div>
+    </section>
+    <nav class="pager"><a class="prev" href="ch07.html"><span class="dir">← 上一章</span><div class="ttl">第 7 章　5D 并行速览</div></a><a class="next" href="ch09.html"><span class="dir">下一章 →</span><div class="ttl">第 9 章　深入 GPU：架构与内核</div></a></nav>
+    <footer class="pagefoot">本站为简体转换版本，基于 <a href="https://github.com/ai-twinkle">Twinkle AI Community</a>（台湾）的<strong>非官方社群翻译</strong> · 译自 Hugging Face nanotron 团队《<a href="https://huggingface.co/spaces/nanotron/ultrascale-playbook">The Ultra-Scale Playbook</a>》· 原作依 Apache 2.0 发布，译文同授权，仅供学习研究使用。</footer>
+  </main>
+</div>
+<script type="text/markdown" id="chapter-md">
+# 第 8 章　寻找最佳训练配置（Finding the Best Training Configuration）
+
+> 译自 Hugging Face nanotron 团队《The Ultra-Scale Playbook: Training LLMs on GPU Clusters》（Apache 2.0），原文为 [Hugging Face Space](https://huggingface.co/spaces/nanotron/ultrascale-playbook)。
+
+到目前为止，我们已经介绍了实践中真正用来分散并训练更大模型的所有并行化技术，也说明了它们如何组合、为何能够组合。但仍有一个大哉问：最终我们该选择哪些技术，又该如何决定具体的组合方式？
+
+前一节我们稍微触及了这个问题，现在就让我们一步步详细走过一个可行的决策流程。请记住，你永远都需要实际跑几个实验，才能针对你的运算集群——考量其各种物理特性、网络带宽、每节点 GPU 数、每张 GPU 的内存等——找到最终的最佳设定。
+
+## 步骤一：让一个训练步骤放进内存（Fitting a Training Step in Memory）
+
+首先，我们需要弄清楚如何将一个完整的模型实例放进我们的 GPU。这里有两种常见情境。
+
+**GPU 充裕的情况 🤑**——当你手上有大量 GPU 可用时：
+
+* 对于 10B 参数以下的模型，你可以只用单一并行化技术，例如在 8 张 GPU 上使用张量并行（TP），或搭配完整重算（Full Recompute）的 ZeRO-3/DP
+* 对于 10B 到 100B 参数之间、需要超过 8 张 GPU 的模型，你有几种选择：
+  * 结合张量并行（TP=8）与流水线并行（PP）
+  * 结合张量并行（TP=8）与数据并行（ZeRO-3）
+  * 只使用 ZeRO-3（也就是纯数据并行）
+* 到了 512+ GPU 的规模，纯数据并行／ZeRO-3 会因为通信成本而开始变得没有效率——此时把 DP 与张量并行或流水线并行结合起来，会是更好的做法
+* 到了 1024+ GPU 的规模，建议的设定是张量并行 TP=8 搭配数据并行（ZeRO-2）与流水线并行
+
+> 📝 **注**：目前我们先专注在放得下单一模型实例——虽然我们可能会借助 DP（透过 ZeRO）来达成这个目标，但这里我们只在意 ZeRO-3 在模型参数上带来的内存节省。
+
+特殊考量：
+
+* 对于非常长的序列，你可能会想跨节点加上上下文并行（CP）。
+* 对于混合专家（Mixture of Experts）架构，跨节点使用专家并行（EP）会很有优势。
+
+**GPU 匮乏的情况 😭**——当你的 GPU 资源可能捉襟见肘时：
+
+* 你可以启用完整的激活值重算（full activation recomputation），用一些计算量换取内存（训练会稍微变慢）。
+* 你可以增加梯度累积（gradient accumulation）步数，在有限的内存下处理更大的批次。
+
+现在我们已经有第一个能训练起来的模型实例了，接下来要确保批次大小设定正确。
+
+## 步骤二：达到目标全局批次大小（Achieving Target Global Batch Size）
+
+取决于步骤一结束时我们的微批次大小（micro batch size）与 DP 程度落在哪里，目前的批次大小可能太小或太大。现在该把它调整到我们的目标批次大小了。
+
+要增加目前的全局批次大小（global batch size）：
+
+* 我们可以扩大数据并行的规模，或增加梯度累积步数
+* 对于长序列，我们可以利用上下文并行
+
+要减少目前的全局批次大小：
+
+* 我们可以缩减数据并行，改采其他并行化策略
+* 对于长序列，我们可以降低上下文并行的程度
+
+好了，现在模型已经以我们想要的模型大小与批次大小这个大方向的配置跑起来了，但我们是用最快的方式在训练它吗？接下来就开始尽可能地将吞吐量（throughput）优化吧。
+
+## 步骤三：优化训练吞吐量（Optimizing Training Throughput）
+
+我们希望训练跑得越快越好，让所有宝贵的 GPU 随时都被充分利用。只要内存和通信还不是瓶颈，我们可以尝试以下做法：
+
+* 扩大张量并行（利用节点内的高速带宽），直到并行度接近节点大小，以便减少其他并行化的需求
+* 在维持目标批次大小的前提下，增加使用 ZeRO-3 的数据并行
+* 当数据并行的通信开始成为瓶颈时，转而使用流水线并行
+* 逐一尝试扩大各种并行化
+* 尝试多种微批次大小（$mbs$），在最大全局批次大小（GBS）、模型大小、计算与通信之间找到最佳平衡
+
+## 对数千种配置进行基准测试（Benchmarking thousands of configurations）
+
+既然一步步的流程都讲完了，就让我们在真实世界中实现这个搜寻过程。
+
+在 [nanotron](https://github.com/huggingface/nanotron) 储存库中，你可以找到数个脚本，用来执行我们前面讨论过的所有实验，并在真实环境中对你自己的模型与集群进行基准测试。
+
+我们自己实际对**数千种分布式配置**跑了基准测试，涵盖前面讨论过的每一种模型大小，以及大量我们能尝试的集群配置（即 1 到 64 个节点、每节点 8 张 H100），以产出本书至此呈现的所有结果。
+
+> 📝 **注**：我们想借此机会向同事们致歉，因为我们几乎占满了整个科学集群；也顺道原谅那些可能曾被低声说出的威胁。
+
+现在让我们退一步，汇整并分析所有基准测试的结果，看看在理论之外，我们能否从真实世界的数据中实际发现各种配置彼此的优劣。
+
+以下所有基准测试都以 4096 的序列长度、1M token 的全局批次大小进行。我们搜集了每种模型与集群大小之下的所有最佳配置，并绘制成以下的热力图：
+
+![what_we_learnt_heatmap](../webapp/assets/images/what_we_learnt_heatmap.svg)
+
+*热力图可视化呈现不同模型大小与运算节点数（每个节点有 8 张 GPU）之下的最佳训练配置。每种组合的配置细节包括数据并行（DP）、张量并行（TP）、流水线并行（PP）、梯度累积步数（GAS）、微批次大小（MBS）以及 ZeRO 优化阶段。颜色深浅代表模型 FLOPs 利用率（Model FLOPs Utilization，MFU），越亮代表效率越高。*
+
+从这张高层次的可视化图表中，我们可以归纳出几个重要的洞察：
+
+首先，随着节点数增加（更高的并行度），我们观察到效率下降。这个效应在较小的模型上特别明显，因为它们的计算量对模型大小的比值较低。虽然我们通常可以透过增加批次大小来弥补模型太小的问题，但我们受限于 1M 的全局批次大小上限。
+
+其次，较大的模型带来的是另一种挑战。随着模型大小增加，内存需求大幅成长。在节点较少时，这会造成两种情况：模型完全放不下，或者勉强放得下、却因为运作在接近 GPU 内存上限的状态而效率低落（例如在 4 个节点上训练 80B 参数模型的情况）。
+
+最后，我们的基准测试显示，性能高度取决于实现品质。当我们最初实现这两种并行化策略时，张量并行（TP）的表现优于流水线并行（PP）。在我们优化 PP 代码之后，它反而成为较快的选项。而现在我们正在改进 TP 实现中的通信重叠，预期它将重新夺回性能领先的地位。
+
+## 基准测试的经验教训（Lessons learned on benchmarking）
+
+本书的目标不只是讨论理论与实现，也要提供实际的数据点。所以计划很简单：对每一种模型与多种集群大小（即 1 到 64 个节点、每节点 8 张 H100）跑遍所有可能的分布式配置。即便排除掉不可能的配置之后，我们仍需执行数千个实验。
+
+纸上谈兵听起来很容易：我们可以轻松地在集群上发起大批的工作阵列。然而，当我们送出第一批实验后，麻烦就开始了：
+
+* PyTorch 行程有时无法正确清理
+* Slurm 工作管理器会强制终止工作，导致节点故障
+* 原本应该几分钟就能完成的简单基准测试，会拖成好几个小时
+* 有些工作会无限期卡住
+
+要在有限的时间内跑完所有实验，需要额外的工程投入，我们最后花了大量时间在以下事项上：
+
+* 将集群重启时间降到最低，并将闲置时间优化
+* 分析详细的 NCCL 调试日志
+* 理解内存使用模式与 CUDA 内存配置器（memory allocator）的行为
+* 改善多节点环境下的流水线并行性能
+
+这些挑战值得专文另述，但它们让我们学到了关于分布式训练基础设施复杂性的宝贵一课。理论上看似简单的事情，实践中往往需要对许多环节投以细心关注。
+
+在实务中重现理论结果相当有挑战性，尤其是可取得的生产级训练代码相当有限。透过 [nanotron](https://github.com/huggingface/nanotron) 与 [picotron](https://github.com/huggingface/picotron) 这样的开源项目，我们希望能让分布式训练技术变得更容易上手，也希望能在简洁、高效的代码基础上共同协作，帮助研究人员与实务工作者将硬件资源发挥到极致。
+
+---
+
+我们对 5D 并行化各种分布式方法的深度探索，到此告一段落。
+
+退一步来看，我们到目前为止的讨论往往仰赖一个关键假设——计算与通信可以在 GPU 上有效率地重叠，而不影响计算吞吐量。现实则更为微妙。当使用 NCCL send/recv 这类常见的通信原语（primitive）时，计算资源与通信资源之间存在隐性的竞争，因为通信 kernel 通常会占用与计算相同的 GPU 流式多处理器（streaming multiprocessor，SM），导致通信与计算重叠时吞吐量下降。要真正将我们的分布式训练优化，就需要更深入探究 GPU 架构本身。
+
+> 📝 **注**：此外，重叠计算与通信时的同步模式，对我们的并行策略而言不一定是最佳的。你可以在 PyTorch 团队的[这篇部落格文章](https://discuss.pytorch.org/t/distributed-w-torchtitan-introducing-async-tensor-parallelism-in-pytorch/209487)中找到一个例子。
+
+是时候关上灯，启动 CUDA 模式了！
+
+</script>
+<script src="../assets/marked.min.js"></script>
+<script src="../assets/katex/katex.min.js"></script>
+<script src="../assets/katex/auto-render.min.js"></script>
+<script src="../assets/widgets/ch08.js"></script>
+<script src="../assets/app.js"></script>
+<script src="../assets/gh-star.js"></script>
+</body>
+</html>

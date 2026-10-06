@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ultra-Scale Playbook 中文版 — 在 GPU 集群上训练 LLM</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<section class="hero">
+  <div class="eyebrow">简体中文全译本 · 交互版</div>
+  <h1>超大规模训练实战手册<br>The Ultra-Scale Playbook</h1>
+  <p class="sub">Hugging Face nanotron 团队著（Nouamane Tazi、Ferdinand Mom、Haojun Zhao、Phuc Nguyen、Mohamed Mekkouri、Leandro von Werra、Thomas Wolf）。从单 GPU 的内存剖析出发，一路走到数据／张量／上下文／流水线／专家五维并行、GPU kernel 优化与混合精度——在 GPU 集群上训练大型语言模型所需的一切。每章附交互实验。</p>
+  <p class="sub" style="font-size:.82rem">简体版基于台湾 <a href="https://github.com/ai-twinkle">Twinkle AI Community</a> 的繁体中文翻译转换，保留原翻译署名。</p>
+  <div class="meta">
+    <div><b>12</b>章节</div>
+    <div><b>4</b>附录</div>
+    <div><b>134</b>插图</div>
+    <div><b>16</b>交互实验</div>
+    <a href="https://github.com/pengchengneo/ultrascale-playbook-zh-tw" target="_blank" rel="noopener" data-gh-repo="pengchengneo/ultrascale-playbook-zh-tw"><b class="gh-count">—</b>GitHub ★</a>
+  </div>
+</section>
+<div class="grid-wrap">
+  <h2>章节</h2>
+  <div class="chapter-grid">
+    <a class="card" href="chapters/ch00.html"><span class="badge">交互实验</span><span class="no">导论</span><span class="zh">导论与全书鸟瞰</span><span class="en">Introduction &amp; High-Level Overview</span><span class="desc">为什么要学大规模训练、全书地图与速查表。</span></a>
+    <a class="card" href="chapters/ch01.html"><span class="badge">交互实验</span><span class="no">第 1 章</span><span class="zh">第一步：单 GPU 训练</span><span class="en">First Steps: Training on one GPU</span><span class="desc">Transformer 内存剖析、激活重算与梯度累积。</span></a>
+    <a class="card" href="chapters/ch02.html"><span class="badge">交互实验</span><span class="no">第 2 章</span><span class="zh">数据并行</span><span class="en">Data Parallelism</span><span class="desc">DP 通信与计算重叠、全局批次大小，与 ZeRO 1/2/3 分片。</span></a>
+    <a class="card" href="chapters/ch03.html"><span class="badge">交互实验</span><span class="no">第 3 章</span><span class="zh">张量并行</span><span class="en">Tensor Parallelism</span><span class="desc">行/列切分线性层、Transformer 区块的 TP 与序列并行。</span></a>
+    <a class="card" href="chapters/ch04.html"><span class="badge">交互实验</span><span class="no">第 4 章</span><span class="zh">上下文并行</span><span class="en">Context Parallelism</span><span class="desc">超长序列的激活内存、Ring Attention 与 Zig-Zag 平衡。</span></a>
+    <a class="card" href="chapters/ch05.html"><span class="badge">交互实验</span><span class="no">第 5 章</span><span class="zh">流水线并行</span><span class="en">Pipeline Parallelism</span><span class="desc">AFAB、1F1B、交错阶段到 Zero Bubble 与 DualPipe。</span></a>
+    <a class="card" href="chapters/ch06.html"><span class="badge">交互实验</span><span class="no">第 6 章</span><span class="zh">专家并行</span><span class="en">Expert Parallelism</span><span class="desc">MoE 模型的专家分片与路由。</span></a>
+    <a class="card" href="chapters/ch07.html"><span class="badge">交互实验</span><span class="no">第 7 章</span><span class="zh">5D 并行速览</span><span class="en">5D Parallelism in a Nutshell</span><span class="desc">DP／TP／SP／CP／PP／EP 全家族的统一视角与组合原则。</span></a>
+    <a class="card" href="chapters/ch08.html"><span class="badge">交互实验</span><span class="no">第 8 章</span><span class="zh">寻找最佳训练配置</span><span class="en">Finding the Best Training Configuration</span><span class="desc">三步骤：塞进内存、达成目标批次、最大化吞吐；数千组实测的教训。</span></a>
+    <a class="card" href="chapters/ch09.html"><span class="badge">交互实验</span><span class="no">第 9 章</span><span class="zh">深入 GPU：架构与内核</span><span class="en">Diving in the GPUs: Architecture &amp; Kernels</span><span class="desc">GPU 架构速成、线程与内存阶层、写出高效 kernel。</span></a>
+    <a class="card" href="chapters/ch10.html"><span class="badge">交互实验</span><span class="no">第 10 章</span><span class="zh">融合内核、Flash Attention 与混合精度</span><span class="en">Fused Kernels, Flash Attention &amp; Mixed Precision</span><span class="desc">kernel 融合、FA1-3 的内存魔法，与 FP32/BF16/FP8 训练。</span></a>
+    <a class="card" href="chapters/ch11.html"><span class="badge">交互实验</span><span class="no">结语</span><span class="zh">结语与展望</span><span class="en">Conclusion</span><span class="desc">全书回顾、下一步，与致谢。</span></a>
+  </div>
+  <h2>附录与资源</h2>
+  <div class="chapter-grid">
+    <a class="card" href="chapters/appa.html"><span class="badge">交互实验</span><span class="no">附录 A0</span><span class="zh">并行编程速成</span><span class="en">A0: Parallel Programming Crash Course</span><span class="desc">broadcast、all-reduce、scatter/gather 等集体通信操作。</span></a>
+    <a class="card" href="chapters/appb.html"><span class="badge">交互实验</span><span class="no">附录 A1</span><span class="zh">分布式训练性能分析</span><span class="en">A1: Distributed Training Profiling</span><span class="desc">用 profiler 看懂 kernel 与通信的时间轴。</span></a>
+    <a class="card" href="chapters/appc.html"><span class="badge">交互实验</span><span class="no">附录 A2</span><span class="zh">LLM 训练的典型尺度</span><span class="en">A2: Typical Scales in LLM Training</span><span class="desc">模型、批次、集群规模的数量级速查。</span></a>
+    <a class="card" href="chapters/appd.html"><span class="badge">交互实验</span><span class="no">附录 A3</span><span class="zh">计算／通信重叠的数学</span><span class="en">A3: Math for Compute/Communication Overlap</span><span class="desc">各并行策略下重叠条件的推导。</span></a>
+    <a class="card" href="chapters/references.html"><span class="no">参考资源</span><span class="zh">参考资源</span><span class="en">References</span><span class="desc">里程碑论文、训练框架、调试与硬件资源的注解书单。</span></a>
+  </div>
+</div>
+<footer class="foot">本站为简体转换版本，基于 <a href="https://github.com/ai-twinkle">Twinkle AI Community</a>（台湾）的<strong>非官方社群翻译</strong>（unofficial community translation）· 译自 Hugging Face nanotron 团队《<a href="https://huggingface.co/spaces/nanotron/ultrascale-playbook">The Ultra-Scale Playbook: Training LLMs on GPU Clusters</a>》· 原作依 Apache 2.0 发布，译文同授权 · 仅供学习研究使用 · <a href="https://github.com/pengchengneo/ultrascale-playbook-zh-tw">GitHub 原始码</a></footer>
+<script src="assets/gh-star.js"></script>
+</body>
+</html>

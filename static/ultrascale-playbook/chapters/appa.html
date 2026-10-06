@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>附录 A0　并行编程速成 — Ultra-Scale Playbook 中文版</title>
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="../index.html">Ultra-Scale Playbook 中文版<span>在 GPU 集群上训练 LLM</span></a>
+  <nav class="chapnav"><a href="ch11.html">← 结语</a><span class="chapnav-current">附录 A0　并行编程速成</span><a href="appb.html">附录 A1 →</a><a class="gh-star" href="https://github.com/pengchengneo/ultrascale-playbook-zh-tw" target="_blank" rel="noopener" data-gh-repo="pengchengneo/ultrascale-playbook-zh-tw"><span class="star-ico">★</span><span class="gh-label">Star</span><b class="gh-count" hidden></b></a></nav>
+</header>
+<div class="layout">
+  <aside class="sidebar"><nav id="toc" class="toc"><h2>本章目录</h2></nav></aside>
+  <main class="main">
+    <div id="lab-banner"></div>
+    <article id="content" class="prose"></article>
+    <section id="lab" class="lab" hidden>
+      <h2 class="lab-title">🧪 交互实验室</h2>
+      <div id="lab-intro"></div>
+      <div id="lab-root"></div>
+    </section>
+    <nav class="pager"><a class="prev" href="ch11.html"><span class="dir">← 上一章</span><div class="ttl">结语　结语与展望</div></a><a class="next" href="appb.html"><span class="dir">下一章 →</span><div class="ttl">附录 A1　分布式训练性能分析</div></a></nav>
+    <footer class="pagefoot">本站为简体转换版本，基于 <a href="https://github.com/ai-twinkle">Twinkle AI Community</a>（台湾）的<strong>非官方社群翻译</strong> · 译自 Hugging Face nanotron 团队《<a href="https://huggingface.co/spaces/nanotron/ultrascale-playbook">The Ultra-Scale Playbook</a>》· 原作依 Apache 2.0 发布，译文同授权，仅供学习研究使用。</footer>
+  </main>
+</div>
+<script type="text/markdown" id="chapter-md">
+# 附录 A0　并行编程速成（Parallel Programming Crash Course）
+
+> 译自 Hugging Face nanotron 团队《The Ultra-Scale Playbook: Training LLMs on GPU Clusters》（Apache 2.0），原文为 [Hugging Face Space](https://huggingface.co/spaces/nanotron/ultrascale-playbook)。
+
+在本书中，我们把 LLM 训练从一张 GPU 扩展到数百张 GPU。这需要在所有机器之间进行权重、梯度与数据的通信和同步。有一组分布式模式正是为此而生，称为**集体通信操作（collective operations）**。在本节中，我们将对这些操作——*Broadcast*、*All-Reduce*、*Scatter* 等——做一场小小的速成课。让我们开始吧！
+
+一般的情境是：我们有若干个彼此独立的节点，它们可以是 CPU 核心、GPU 或运算节点。每个节点各自执行一些运算，接着我们想把结果（或结果的一部分）传递给其他节点，供下一个运算步骤（$t+1$）使用。
+
+![集体通信的一般情境](../webapp/assets/images/a0_general.png)
+
+*集体通信的一般情境：多个独立节点在运算步骤之间交换结果。*
+
+也许我们需要把某个节点的结果送给所有其他节点，或是需要把每个节点的中间结果加总起来，以回报整体结果。通常会有一个地位较特殊、扮演核心角色的节点，这里以 `root`（根节点）表示，它是某些操作的目标或来源。让我们从最简单的基本操作之一开始：Broadcast（广播）操作。
+
+## Broadcast
+
+一个非常常见的模式是：节点 1 上有一些数据，而你想把它分享给所有其他节点，让它们能用这份数据进行运算。Broadcast 操作做的正是这件事：
+
+![Broadcast 操作示意图](../webapp/assets/images/a0_broadcast.png)
+
+*Broadcast 操作：将根节点上的数据复制到所有其他节点。*
+
+集体通信操作是 PyTorch 原生提供的，所以我们可以轻松写一个小例子来示范广播如何运作。我们首先需要用 `dist.init_process_group` 初始化一个行程群组（process group），它会设定好通信后端（我们稍后会谈到 NCCL），确定存在多少个 worker（也就是节点），并为每个 worker 指派一个 rank（可以用 `dist.get_rank` 取得）。最后，它会在各 worker 之间建立连线。
+
+为了展示 `dist.broadcast` 操作，我们在 `rank=0` 上建立一个含非零值的张量，在其他 worker 上则建立全为零的张量。接着用 `dist.broadcast(tensor, src=0)` 把 `rank=0` 的张量发送给所有其他 rank：
+
+```python
+import torch
+import torch.distributed as dist
+
+def init_process():
+    dist.init_process_group(backend='nccl')
+    torch.cuda.set_device(dist.get_rank())
+
+def example_broadcast():
+    if dist.get_rank() == 0:
+        tensor = torch.tensor([1, 2, 3, 4, 5], dtype=torch.float32).cuda()
+    else:
+        tensor = torch.zeros(5, dtype=torch.float32).cuda()
+    print(f"Before broadcast on rank {dist.get_rank()}: {tensor}")
+    dist.broadcast(tensor, src=0)
+    print(f"After broadcast on rank {dist.get_rank()}: {tensor}")
+
+init_process()
+example_broadcats()
+```
+
+你可以用 `torchrun --nproc_per_node=3 dist_op.py` 执行上面的脚本（你需要 3 张 GPU，或依情况调整 `nproc_per_node`），应该会看到如下输出：
+
+```
+Before broadcast on rank 0: tensor([1., 2., 3., 4., 5.], device='cuda:0')
+Before broadcast on rank 1: tensor([0., 0., 0., 0., 0.], device='cuda:1')
+Before broadcast on rank 2: tensor([0., 0., 0., 0., 0.], device='cuda:2')
+
+After broadcast on rank 0: tensor([1., 2., 3., 4., 5.], device='cuda:0')
+After broadcast on rank 1: tensor([1., 2., 3., 4., 5.], device='cuda:1')
+After broadcast on rank 2: tensor([1., 2., 3., 4., 5.], device='cuda:2')
+```
+
+很好，看起来一切如预期运作。请注意，各 rank 的讯息可能会乱序印出，因为我们无法控制哪个 print 叙述先执行（这里为了可读性把它们排好了顺序）。接下来让我们看看 Reduce 与 All-Reduce 模式！
+
+## Reduce 与 All-Reduce
+
+Reduce（归约）模式是分布式数据处理中最基本的模式之一。它的概念是：你想透过一个函数 `f()`（例如加总或平均）把每个节点上的数据合并起来。在 Reduce 范式中，结果只会送到根节点；而在 All-Reduce（全归约）的情况下，结果会广播给所有节点：
+
+![Reduce 与 All-Reduce 操作示意图](../webapp/assets/images/a0_reduce_allreduce.png)
+
+*Reduce 操作将各节点数据合并后送至根节点；All-Reduce 则让所有节点都得到合并结果。*
+
+当然，并没有什么神奇的「自由飞翔」节点能独力完成这个运算；一般而言，每个节点会做一部分运算，节点之间则组织成环状（ring）或树状（tree）结构。举个简单的例子：假设我们要把每个节点上的数字加总，而节点以环状模式相连。第一个节点把自己的数字送给邻居，邻居把自己的数字加到收到的数字上，再转发给下一个邻居。沿着节点环绕行一圈之后，第一个节点就会收到总和。
+
+以下是执行简单 Reduce 操作、将张量加总的代码，我们用 `op=dist.ReduceOp.SUM` 指定要使用的运算（关于支援的运算，更多资讯请见 [PyTorch 文件](https://pytorch.org/docs/stable/distributed.html#torch.distributed.ReduceOp)）：
+
+```python
+def example_reduce():
+    tensor = torch.tensor([dist.get_rank() + 1] * 5, dtype=torch.float32).cuda()
+    print(f"Before reduce on rank {dist.get_rank()}: {tensor}")
+    dist.reduce(tensor, dst=0, op=dist.ReduceOp.SUM)
+    print(f"After reduce on rank {rank}: {tensor}")
+
+init_process()
+example_reduce()
+```
+
+注意在 Reduce 操作中，只有 `dst` 节点上的张量会被更新：
+
+```
+Before reduce on rank 0: tensor([1., 1., 1., 1., 1.], device='cuda:0')
+Before reduce on rank 1: tensor([2., 2., 2., 2., 2.], device='cuda:1')
+Before reduce on rank 2: tensor([3., 3., 3., 3., 3.], device='cuda:2')
+
+After reduce on rank 0: tensor([6., 6., 6., 6., 6.], device='cuda:0')
+After reduce on rank 1: tensor([2., 2., 2., 2., 2.], device='cuda:1')
+After reduce on rank 2: tensor([3., 3., 3., 3., 3.], device='cuda:2')
+```
+
+同样地，我们也可以执行 All-Reduce（这种情况下不需要指定目的节点）：
+
+```python
+def example_all_reduce():
+    tensor = torch.tensor([dist.get_rank() + 1] * 5, dtype=torch.float32).cuda()
+    print(f"Before all_reduce on rank {dist.get_rank()}: {tensor}")
+    dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
+    print(f"After all_reduce on rank {dist.get_rank()}: {tensor}")
+
+init_process()
+example_all_reduce()
+```
+
+在这种情况下，所有节点上都能取得结果：
+
+```
+Before all_reduce on rank 0: tensor([1., 1., 1., 1., 1.], device='cuda:0')
+Before all_reduce on rank 1: tensor([2., 2., 2., 2., 2.], device='cuda:1')
+Before all_reduce on rank 2: tensor([3., 3., 3., 3., 3.], device='cuda:2')
+
+After all_reduce on rank 0: tensor([6., 6., 6., 6., 6.], device='cuda:0')
+After all_reduce on rank 1: tensor([6., 6., 6., 6., 6.], device='cuda:1')
+After all_reduce on rank 2: tensor([6., 6., 6., 6., 6.], device='cuda:2')
+```
+
+接下来我们看下一个分布式通信操作。在许多实际情况中，每个节点会各自执行许多复杂的运算，而我们需要在节点之间分享最终结果。Gather 与 All-Gather 正是这种情况下要用的操作。让我们来看看！
+
+## Gather 与 All-Gather
+
+Gather（收集）与 All-Gather（全收集）跟 Broadcast 很相似，都是在节点之间分发数据而不做任何修改。与 Broadcast 的主要差异在于：我们要分享的不是「一个节点上的单一份数据」，而是每个节点各自拥有一块独立的数据，我们想把所有数据收集到一个节点上（Gather 的情况），或收集到所有节点上（All-Gather 的情况）。一图胜千言，来看看吧：
+
+![Gather 与 All-Gather 操作示意图](../webapp/assets/images/a0_gather_allgather.png)
+
+*Gather 将各节点的数据块收集到根节点；All-Gather 则让每个节点都收集到所有数据块。*
+
+注意虚线表示有些数据其实完全不需要移动（因为它本来就在该节点上）。
+
+在 Gather 操作中，我们需要准备一个容器物件来存放收集到的张量——在这个例子中是 `gather_list`：
+
+```python
+def example_gather():
+    tensor = torch.tensor([dist.get_rank() + 1] * 5, dtype=torch.float32).cuda()
+    if dist.get_rank() == 0:
+        gather_list = [
+            torch.zeros(5, dtype=torch.float32).cuda()
+            for _ in range(dist.get_world_size())
+            ]
+    else:
+        gather_list = None
+    print(f"Before gather on rank {dist.get_rank()}: {tensor}")
+    dist.gather(tensor, gather_list, dst=0)
+    if dist.get_rank() == 0:
+        print(f"After gather on rank 0: {gather_list}")
+
+init_process()
+example_gather()
+```
+
+我们可以看到，`gather_list` 确实包含了所有 rank 的张量：
+
+```
+Before gather on rank 0: tensor([1., 1., 1., 1., 1.], device='cuda:0')
+Before gather on rank 1: tensor([2., 2., 2., 2., 2.], device='cuda:1')
+Before gather on rank 2: tensor([3., 3., 3., 3., 3.], device='cuda:2')
+
+After gather on rank 0: [tensor([1., 1., 1., 1., 1.], device='cuda:0'),
+                         tensor([2., 2., 2., 2., 2.], device='cuda:0'),
+                         tensor([3., 3., 3., 3., 3.], device='cuda:0')]
+```
+
+对于 All-Gather 的范例，我们唯一需要改变的是：每个节点都需要一个存放结果的占位容器：
+
+```python
+def example_all_gather():
+    tensor = torch.tensor([dist.get_rank() + 1] * 5, dtype=torch.float32).cuda()
+    gather_list = [
+        torch.zeros(5, dtype=torch.float32).cuda()
+        for _ in range(dist.get_world_size())
+        ]
+    print(f"Before all_gather on rank {dist.get_rank()}: {tensor}")
+    dist.all_gather(gather_list, tensor)
+    print(f"After all_gather on rank {dist.get_rank()}: {gather_list}")
+
+init_process()
+example_all_gather()
+```
+
+确实，我们可以看到现在每个节点都拥有全部的数据：
+
+```
+Before all_gather on rank 0: tensor([1., 1., 1., 1., 1.], device='cuda:0')
+Before all_gather on rank 1: tensor([2., 2., 2., 2., 2.], device='cuda:1')
+Before all_gather on rank 2: tensor([3., 3., 3., 3., 3.], device='cuda:2')
+
+After all_gather on rank 0: [tensor([1., 1., 1., 1., 1.], device='cuda:0'),
+                             tensor([2., 2., 2., 2., 2.], device='cuda:0'),
+                             tensor([3., 3., 3., 3., 3.], device='cuda:0')]
+After all_gather on rank 1: [tensor([1., 1., 1., 1., 1.], device='cuda:1'),
+                             tensor([2., 2., 2., 2., 2.], device='cuda:0'),
+                             tensor([3., 3., 3., 3., 3.], device='cuda:0')]
+After all_gather on rank 2: [tensor([1., 1., 1., 1., 1.], device='cuda:2'),
+                             tensor([2., 2., 2., 2., 2.], device='cuda:2'),
+                             tensor([3., 3., 3., 3., 3.], device='cuda:2')]
+```
+
+那 Gather 的反向操作呢？在这种情况下，我们把所有数据放在一个节点上，想把它切分后分发到各个节点，过程中可能还带点中间处理。这时可以使用 Scatter，或者在需要对数据先做运算的情况下，使用 Reduce-Scatter 模式：
+
+## Scatter 与 Reduce-Scatter
+
+顾名思义，Scatter（分散）操作的目的是把一个节点上的数据切成分片，并把分片分发给所有其他节点。因此它与 Broadcast 操作不同——Broadcast 是不切分地复制整份数据——而它正是 Gather 操作在逻辑上的反向操作。
+
+Reduce-Scatter（归约分散）模式稍微复杂一点：想像你像 Reduce 那样对数据套用一个运算，但结果不是只送到一个节点，而是平均分发给所有节点：
+
+![Scatter 与 Reduce-Scatter 操作示意图](../webapp/assets/images/a0_scatter_reducescatter.png)
+
+*Scatter 将根节点的数据切片后分发给各节点；Reduce-Scatter 先对各节点数据做归约运算，再把结果切片分发。*
+
+Scatter 操作在代码中的写法正好与 Gather 相反：我们准备的不是存放结果的张量清单，而是要分发出去的来源数据张量清单。我们还需要指定 `src`：
+
+```python
+def example_scatter():
+    if dist.get_rank() == 0:
+        scatter_list = [
+            torch.tensor([i + 1] * 5, dtype=torch.float32).cuda()
+            for i in range(dist.get_world_size())
+            ]
+        print(f"Rank 0: Tensor to scatter: {scatter_list}")
+    else:
+        scatter_list = None
+    tensor = torch.zeros(5, dtype=torch.float32).cuda()
+    print(f"Before scatter on rank {dist.get_rank()}: {tensor}")
+    dist.scatter(tensor, scatter_list, src=0)
+    print(f"After scatter on rank {dist.get_rank()}: {tensor}")
+
+init_process()
+example_scatter()
+```
+
+从结果可以看到，空白的张量被填入了 `scatter_list` 的内容：
+
+```
+Rank 0: Tensor to scatter: [tensor([1., 1., 1., 1., 1.], device='cuda:0'),
+                            tensor([2., 2., 2., 2., 2.], device='cuda:0'),
+                            tensor([3., 3., 3., 3., 3.], device='cuda:0')]
+Before scatter on rank 0: tensor([0., 0., 0., 0., 0.], device='cuda:0')
+Before scatter on rank 1: tensor([0., 0., 0., 0., 0.], device='cuda:1')
+Before scatter on rank 2: tensor([0., 0., 0., 0., 0.], device='cuda:2')
+
+After scatter on rank 0: tensor([1., 1., 1., 1., 1.], device='cuda:0')
+After scatter on rank 1: tensor([2., 2., 2., 2., 2.], device='cuda:1')
+After scatter on rank 2: tensor([3., 3., 3., 3., 3.], device='cuda:2')
+```
+
+让我们建立一些更有趣的数据来示范 Reduce-Scatter 的逻辑：在每个节点上，我们各建立一个由 2 元素向量组成的清单，其中的幂次与偏移量都是节点 rank 的函数（有点难凭空想像，直接看下面的范例吧）：
+
+```python
+def example_reduce_scatter():
+    rank = dist.get_rank()
+    world_size = dist.get_world_size()
+    input_tensor = [
+        torch.tensor([(rank + 1) * i for i in range(1, 3)], dtype=torch.float32).cuda()**(j+1) 
+        for j in range(world_size)
+        ]
+    output_tensor = torch.zeros(2, dtype=torch.float32).cuda()
+    print(f"Before ReduceScatter on rank {rank}: {input_tensor}")
+    dist.reduce_scatter(output_tensor, input_tensor, op=dist.ReduceOp.SUM)
+    print(f"After ReduceScatter on rank {rank}: {output_tensor}")    
+
+init_process()
+example_reduce_scatter()
+```
+
+让我们印出刚才建立的数据型态。同时也能立刻看出 Reduce-Scatter 的模式：第一个 rank 收到的是各节点第一个张量的总和，第二个 rank 收到的是各节点第二个张量的总和，依此类推：
+
+```
+Before ReduceScatter on rank 0: [tensor([1., 2.], device='cuda:0'),
+                                 tensor([1., 4.], device='cuda:0'),
+                                 tensor([1., 8.], device='cuda:0')]
+Before ReduceScatter on rank 1: [tensor([2., 4.], device='cuda:1'),
+                                 tensor([ 4., 16.], device='cuda:1'),
+                                 tensor([ 8., 64.], device='cuda:1')]
+Before ReduceScatter on rank 2: [tensor([3., 6.], device='cuda:2'),
+                                 tensor([ 9., 36.], device='cuda:2'),
+                                 tensor([ 27., 216.], device='cuda:2')]
+
+After ReduceScatter on rank 0: tensor([ 6., 12.], device='cuda:0')
+After ReduceScatter on rank 1: tensor([14., 56.], device='cuda:1')
+After ReduceScatter on rank 2: tensor([ 36., 288.], device='cuda:2')
+```
+
+接下来，让我们快速看看一个利用 Reduce-Scatter 与 All-Gather 来实现 All-Reduce 的常见做法：Ring All-Reduce。
+
+## 快速聚焦：Ring All-Reduce
+
+**Ring All-Reduce（环状全归约）**是 All-Reduce 的一种特定实现，针对可扩展性做了优化。相较于让所有装置彼此直接通信（那可能造成通信瓶颈），Ring All-Reduce 可以拆解为两个关键步骤：Reduce-Scatter 与 All-Gather。它的运作方式如下：
+
+1. **Reduce-Scatter**
+   * 每个装置把自己的数据（例如梯度）切成多个数据块（chunk），并把其中一块送给邻居。同时，每个装置也会从另一侧的邻居收到一块数据。
+   * 每当装置收到一块数据，就把自己对应的那块加（归约）到收到的数据块上。
+   * 这个过程沿着环持续进行，直到每个装置都持有一块归约完成的数据块，代表该数据块在所有装置上的梯度总和。
+2. **All-Gather**
+   * 现在，每个装置需要向其他装置收集那些已完成归约的数据块。
+   * 各装置开始把自己归约好的数据块送给邻居。
+   * 每个装置持续转发收到的数据块，直到每个装置都拥有全部归约完成的数据块，让每个装置都得到完整、加总后的梯度。
+
+让我们用以下的 GIF 动画来说明：这里有 5 张 GPU，每张各有一个长度为 5 的张量。第一段动画展示 Reduce-Scatter 步骤——结束时，每张 GPU 都会收到某一特定数据块（橘色矩形）的归约结果。
+
+![Ring All-Reduce 的 Reduce-Scatter 步骤动画](../webapp/assets/images/a0_reduce_scatter.gif)
+
+*Reduce-Scatter 步骤：数据块沿着环传递并累加，最终每张 GPU 持有一块完成归约的结果（橘色矩形）。*
+
+下一段动画展示 All-Gather 步骤——结束时，每张 GPU 都会取得 All-Reduce 操作的完整结果：
+
+![Ring All-Reduce 的 All-Gather 步骤动画](../webapp/assets/images/a0_all_gather.gif)
+
+*All-Gather 步骤：归约完成的数据块沿着环转发，最终每张 GPU 都取得完整结果。*
+
+你可能已经注意到，在 reduce-scatter 与 all-gather 两个步骤中，$N$ 张 GPU 中的每一张都会各传送与接收数值 $N-1$ 次。每张 GPU 每次传输会送出 $\frac{K}{N}$ 个数值，其中 $K$ 是这个要在所有 GPU 之间加总的阵列中数值的总数。因此，每张 GPU 传入与传出的数据总量为 $2 \times (N-1) \times \frac{K}{N}$。当 $N$（GPU 数量）很大时，每张 GPU 传入与传出的数据总量约为 $2 \times K$，其中 $K$ 是参数总数。
+
+**关于 All-Reduce，有两个重点要记住：**
+
+1. 当 $N$（GPU 数量）很大时，All-Reduce 的通信成本约为 $2 \times K$。
+2. 一个 All-Reduce 操作可以拆解为一次 reduce-scatter 接着一次 all-gather。这两个操作各自的通信成本是 All-Reduce 的一半，约为 $K$。
+
+由此可见，即使节点之间的带宽有限，这种实现方式也能有效加以利用。
+
+我们已经看过分布式操作的主要建构元件，但在实际见到它们上场之前，先来看看一个专门用于同步的特殊操作：Barrier。
+
+## Barrier
+
+Barrier（同步屏障）是一个用来同步所有节点的简单操作。屏障要等到所有节点都抵达后才会解除，之后节点们才能继续进行后续运算：
+
+![Barrier 操作示意图](../webapp/assets/images/a0_barrier.png)
+
+*Barrier 操作：所有节点都抵达屏障后才能一起继续执行。*
+
+我们可以在每个节点上设定不同的睡眠时间来模拟节点延迟，看看所有节点通过屏障总共花了多久：
+
+```python
+def example_barrier():
+    rank = dist.get_rank()
+    t_start = time.time()
+    print(f"Rank {rank} sleeps {rank} seconds.")
+    time.sleep(rank)  # 模拟不同的处理时间
+    dist.barrier()
+    print(f"Rank {rank} after barrier time delta: {time.time()-t_start:.4f}")
+
+init_process()
+example_barrier()
+```
+
+可以看到，尽管第一个 rank 完全没有睡眠，它同样花了 2 秒才通过屏障：
+
+```
+Rank 0 sleeps 0 seconds.
+Rank 1 sleeps 1 seconds.
+Rank 2 sleeps 2 seconds.
+
+Rank 0 after barrier time delta: 2.0025
+Rank 1 after barrier time delta: 2.0025
+Rank 2 after barrier time delta: 2.0024
+```
+
+像这样同步所有节点时必须谨慎，因为这违背了并行独立运算的初衷，可能因此拖慢整体处理速度。在许多情况下，让跑得快的节点先开始处理下一项工作其实无妨，因为这个快节点在下一轮迭代中可能变慢，延迟便会在整个过程中被拉平。
+
+在进入实际的分布式训练实现之前，让我们先解开一个谜团：NCCL 到底是什么鬼？
+
+## NCCL：NVIDIA Collective Communications Library
+
+在许多 GPU 上训练大型模型时，我们或许偶尔能挖到金矿（gold），但一定会碰上镍矿（nickel，或说 NCCL 🥁）！那是什么？
+
+有好几个实现集体通信、且 PyTorch 支援的函数库：有经典的 **MPI**（Message Passing Interface，讯息传递介面），有 Meta 开发的 **Gloo**，最后还有 `NCCL`（NVIDIA Collective Communications Library，NVIDIA 集体通信函数库）。就集体通信模式而言，它们提供的功能相似，但各自针对不同的硬件配置做了优化：NCCL 的设计目标是高效服务 GPU 对 GPU 的通信，而 MPI 与 Gloo 则是为 CPU 对 CPU 或 CPU 对 GPU 的通信而设。PyTorch 提供了一份[很棒的指南](https://pytorch.org/docs/stable/distributed.html#which-backend-to-use)帮你决定该用哪一个：
+
+* GPU 训练：使用 NCCL
+* CPU 训练：使用 Gloo
+
+决策树中还有一些更细微的要点，就留给读者到上面引用的 PyTorch 指南中自行探索了。
+
+现在我们已经涵盖了分布式训练的基础操作，你应该可以轻松地跟上本书的内容了。
+
+</script>
+<script src="../assets/marked.min.js"></script>
+<script src="../assets/katex/katex.min.js"></script>
+<script src="../assets/katex/auto-render.min.js"></script>
+<script src="../assets/widgets/appa.js"></script>
+<script src="../assets/app.js"></script>
+<script src="../assets/gh-star.js"></script>
+</body>
+</html>

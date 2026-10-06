@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 6 章　专家并行 — Ultra-Scale Playbook 中文版</title>
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="../index.html">Ultra-Scale Playbook 中文版<span>在 GPU 集群上训练 LLM</span></a>
+  <nav class="chapnav"><a href="ch05.html">← 第 5 章</a><span class="chapnav-current">第 6 章　专家并行</span><a href="ch07.html">第 7 章 →</a><a class="gh-star" href="https://github.com/pengchengneo/ultrascale-playbook-zh-tw" target="_blank" rel="noopener" data-gh-repo="pengchengneo/ultrascale-playbook-zh-tw"><span class="star-ico">★</span><span class="gh-label">Star</span><b class="gh-count" hidden></b></a></nav>
+</header>
+<div class="layout">
+  <aside class="sidebar"><nav id="toc" class="toc"><h2>本章目录</h2></nav></aside>
+  <main class="main">
+    <div id="lab-banner"></div>
+    <article id="content" class="prose"></article>
+    <section id="lab" class="lab" hidden>
+      <h2 class="lab-title">🧪 交互实验室</h2>
+      <div id="lab-intro"></div>
+      <div id="lab-root"></div>
+    </section>
+    <nav class="pager"><a class="prev" href="ch05.html"><span class="dir">← 上一章</span><div class="ttl">第 5 章　流水线并行</div></a><a class="next" href="ch07.html"><span class="dir">下一章 →</span><div class="ttl">第 7 章　5D 并行速览</div></a></nav>
+    <footer class="pagefoot">本站为简体转换版本，基于 <a href="https://github.com/ai-twinkle">Twinkle AI Community</a>（台湾）的<strong>非官方社群翻译</strong> · 译自 Hugging Face nanotron 团队《<a href="https://huggingface.co/spaces/nanotron/ultrascale-playbook">The Ultra-Scale Playbook</a>》· 原作依 Apache 2.0 发布，译文同授权，仅供学习研究使用。</footer>
+  </main>
+</div>
+<script type="text/markdown" id="chapter-md">
+# 第 6 章　专家并行（Expert Parallelism）
+> 译自 Hugging Face nanotron 团队《The Ultra-Scale Playbook: Training LLMs on GPU Clusters》（Apache 2.0），原文为 [Hugging Face Space](https://huggingface.co/spaces/nanotron/ultrascale-playbook)。
+
+这是我们要讨论的最后一种并行方法。在深入探讨之前，如果你从未接触过混合专家（Mixture of Experts, MoE）模型，不妨先读读我们先前发表的[这篇篇幅短得多的部落格文章](https://huggingface.co/blog/moe)，它应该能帮助你更全面地理解 MoE 架构。
+
+混合专家模型近来随着 GPT-4、Mixtral，以及更晚近的 DeepSeek-V3/R1 等模型而备受瞩目。其基本想法是：每一层不再只有单一个前馈（feedforward）模组，而是可以有多个并行的模组，并将 token 路由（route）到其中某一个模组，以不同的方式处理。
+
+![ep_moe.png](../webapp/assets/images/ep_moe.png)
+
+*MoE 层的示意图，取自 Switch Transformers 论文*
+
+MoE 层的设计让我们很容易沿着专家这个维度实现并行化，也就是我们所称的**专家并行（expert parallelism, EP）**。由于各个前馈层彼此完全独立，我们可以直接把每个专家的前馈层放到不同的工作节点（worker）上。相较于张量并行（tensor parallelism, TP），这种做法轻量许多：我们不需要切分矩阵乘法，只需要把 token 的隐藏状态路由给正确的专家即可。
+
+实践中，EP 通常会与其他形式的并行搭配使用——例如数据并行（data parallelism, DP）。这是因为 EP 只影响 MoE 层，并不会切分输入的 token（不像上下文并行（context parallelism, CP）会沿着序列长度维度切分 token）。这表示如果我们只使用 EP，GPU 就会对所有非 MoE 的区块做重复的计算。透过将 EP 与 DP 结合，我们就能有效率地把专家和输入批次都切分到各个 GPU 上，如下方的简化示意图所示：
+
+![ep_schema.png](../webapp/assets/images/ep_schema.png)
+
+*数据来源：《A Survey on Mixture of Experts》*
+
+不过我们先别操之过急——接下来的一节会专门讨论不同并行策略之间的各种交互作用，所以如果你还看不懂最后这张图，也不用担心。
+
+实践中，要让 EP 高效运作有一些技巧，而且这些技巧与模型设计紧密相关。举例来说，DeepSeek-V3 在路由器（router）中施加了一项限制，确保每个 token 至多只会被送往 $M$ 个节点（在他们的设定中是 4 个），以便把 token 留在单一节点上、减少通信开销。虽然专家并行已经存在一段时间了，但随着 MoE 架构日益受到关注，它如今才重新获得青睐。
+
+我们计划不久之后在 picotron/nanotron 中加入更完整的 EP 范例，敬请期待！
+
+</script>
+<script src="../assets/marked.min.js"></script>
+<script src="../assets/katex/katex.min.js"></script>
+<script src="../assets/katex/auto-render.min.js"></script>
+<script src="../assets/widgets/ch06.js"></script>
+<script src="../assets/app.js"></script>
+<script src="../assets/gh-star.js"></script>
+</body>
+</html>

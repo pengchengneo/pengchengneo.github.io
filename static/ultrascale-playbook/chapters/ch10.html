@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>第 10 章　融合内核、Flash Attention 与混合精度 — Ultra-Scale Playbook 中文版</title>
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="../index.html">Ultra-Scale Playbook 中文版<span>在 GPU 集群上训练 LLM</span></a>
+  <nav class="chapnav"><a href="ch09.html">← 第 9 章</a><span class="chapnav-current">第 10 章　融合内核、Flash Attention 与混合精度</span><a href="ch11.html">结语 →</a><a class="gh-star" href="https://github.com/pengchengneo/ultrascale-playbook-zh-tw" target="_blank" rel="noopener" data-gh-repo="pengchengneo/ultrascale-playbook-zh-tw"><span class="star-ico">★</span><span class="gh-label">Star</span><b class="gh-count" hidden></b></a></nav>
+</header>
+<div class="layout">
+  <aside class="sidebar"><nav id="toc" class="toc"><h2>本章目录</h2></nav></aside>
+  <main class="main">
+    <div id="lab-banner"></div>
+    <article id="content" class="prose"></article>
+    <section id="lab" class="lab" hidden>
+      <h2 class="lab-title">🧪 交互实验室</h2>
+      <div id="lab-intro"></div>
+      <div id="lab-root"></div>
+    </section>
+    <nav class="pager"><a class="prev" href="ch09.html"><span class="dir">← 上一章</span><div class="ttl">第 9 章　深入 GPU：架构与内核</div></a><a class="next" href="ch11.html"><span class="dir">下一章 →</span><div class="ttl">结语　结语与展望</div></a></nav>
+    <footer class="pagefoot">本站为简体转换版本，基于 <a href="https://github.com/ai-twinkle">Twinkle AI Community</a>（台湾）的<strong>非官方社群翻译</strong> · 译自 Hugging Face nanotron 团队《<a href="https://huggingface.co/spaces/nanotron/ultrascale-playbook">The Ultra-Scale Playbook</a>》· 原作依 Apache 2.0 发布，译文同授权，仅供学习研究使用。</footer>
+  </main>
+</div>
+<script type="text/markdown" id="chapter-md">
+# 第 10 章　融合内核、Flash Attention 与混合精度（Fused Kernels, Flash Attention & Mixed Precision）
+
+> 译自 Hugging Face nanotron 团队《The Ultra-Scale Playbook: Training LLMs on GPU Clusters》（Apache 2.0），原文为 [Hugging Face Space](https://huggingface.co/spaces/nanotron/ultrascale-playbook)。本章为原书「Diving in the GPUs」后半。
+
+## 融合内核（Fused Kernels）
+
+我们已经在许多地方提过，GPU 与 CPU 的运算可以是异步的。特别是，CPU 上的主机（host）代码可以用非阻塞（non-blocking）的方式，把工作负载排程到 GPU 上。
+
+非阻塞对于重叠通信与计算非常有用——这一路上我们已经见识过许多次——但它还可以延伸成一个更一般性的想法：不惜一切代价，避免在主机与 GPU 内核（kernel）指令之间来回奔波。
+
+[Horace He](https://horace.io/brrr_intro.html) 在下面这几张图中，把这个想法诠释得淋漓尽致：
+
+![一连串内核在全局内存与计算单元之间来回搬移](../webapp/assets/images/fused_kernels1.png)
+
+*一连串内核的执行，需要在全局内存与计算单元之间来回搬移数据*
+
+![融合内核一次完成所有运算](../webapp/assets/images/fused_kernels2.png)
+
+*与其把三角形送回全局内存、之后又再读回来，我们干脆一口气完成所有运算*
+
+要怎么避免这种来回搬移呢？最好的办法就是让 GPU 尽可能自主运作。具体作法是把尽可能多的连续计算操作打包进单一内核，交给 GPU 执行，这就是所谓的「融合内核」（fused kernel）。
+
+对于在每个输入 token 上彼此独立执行的一连串逐点（point-like）运算来说，融合内核特别有效率，写起来也特别简单。在这种情况下，把算好的值先送回全局内存、再搬进 SM 内存并启动新的内核，是毫无意义的；把所有值留在本地，直到一整串计算全部完成，效率会高得多。
+
+在 Transformer 模型里，有许多地方都能套用这种内核融合（kernel fusion）手法：只要遇到一连串的逐点运算就行，例如层归一化（layer norm）所涉及的计算。
+
+到这里，我们已经具备了所有必要的知识，可以好好欣赏一件内核工程的旷世杰作：**Flash Attention**。
+
+## Flash Attention 1-3
+
+Flash Attention 由 [Tri Dao](https://tridao.me) 提出，透过撰写定制 CUDA 内核来优化注意力计算，让它更快*而且*更节省内存。Flash Attention 背后的想法，是有效利用 GPU 的各种内存，避免过度依赖其中最慢的一种：GPU 的全局内存。
+
+> 📝 **注**：GPU 的全局内存有个容易让人混淆的名字——「高带宽内存」（High Bandwidth Memory, HBM）🫠
+
+注意力机制的基本实现需要在内存与工作单元之间大量搬移数据。它必须把 $S$ 矩阵与 $P$ 矩阵具现化（materialize）到 HBM 中，也就是说，计算结果得先送到 HBM，再送回 SRAM 进行后续计算：
+
+![朴素注意力实现在 HBM 与 SRAM 之间的数据搬移](../webapp/assets/images/flashattn.png)
+
+由于 HBM 的带宽低得多，这在注意力计算中造成了严重的瓶颈。我们能做得更好吗？Tri Dao 说：可以！
+
+关键在于把 $S$ 矩阵切成小块来计算，让每一小块都能放进 SM 上较小的共享内存。但我们还能更进一步：完全避免具现化那个非常庞大的 $S$ 矩阵，只保留计算 softmax 归一化因子所需的统计量。如此一来，我们可以直接在 SRAM 中一次算出 $O$ 的一部分，而不必来回搬移中间结果。这么做不仅善用了共享内存，也解除了一个内存瓶颈——这个瓶颈来自于具现化模型中（在长上下文长度下）最大的激活矩阵之一：注意力矩阵。
+
+![Flash Attention 分块计算示意图](../webapp/assets/images/flashattn2.png)
+
+*图片来源：FlashAttention 论文*
+
+Flash Attention 的想法解决了模型训练中如此多的瓶颈，因此它迅速成为所有 transformer 执行注意力的预设方式：
+
+* 借由避免具现化 $S$ 矩阵，我们**减轻了注意力的内存负担**
+* 我们也**大幅消除了注意力 $O(S^2)$ 成本在朴素实现下的影响**
+
+也因此，各种线性注意力（linear attention）变体，以及以次二次方（sub-quadratic）复杂度近似注意力的方法——这些都是在 transformer 架构发明后不久发展出来的——大多已被搁置一旁，取而代之的是这个既精确又快速的 Flash Attention 实现与机制。
+
+继 Flash Attention 1 之后，同一个实验室又陆续发表了两个改进版本：Flash Attention 2 与 3。与 Flash Attention 1 相比，Flash Attention 2 与 3 的改进重点不在一般性的注意力机制，而是把它的低阶实现更贴合 GPU 来量身打造：(1) 尽可能减少非矩阵乘法（non-matmul）运算；(2) 在 warp 与线程区块（thread block）之间精心分配工作负载（Flash Attention 2）；以及针对最新 Hopper（H100）架构的 FP8 与 Tensor Core 支援仔细地优化（Flash Attention 3）。
+
+> 📝 **注**：Flash Attention 对哪些注意力模式能被加速有一些限制。可以看看 [FlexAttention](https://pytorch.org/blog/flexattention/)，它是一个既快速*又*有弹性的变体。
+
+Flash Attention 是一场大师级的示范，展示了只要把当前 GPU 加速器内部的内存／计算设计纳入考量，就可能带来何等突破性的改进。
+
+---
+
+到目前为止，本节（运算融合）所描述的技术，都需要我们修改建模代码，并为特定运算撰写定制内核，才能加速训练。
+
+在这趟深入计算操作本身的低阶之旅的最后一节，我们要来看一系列与建模代码无关的方法。这些方法适用于任何模型，而且使用得如此广泛，已然成为业界标准：**混合精度训练（Mixed Precision Training）**！
+
+## 混合精度训练（Mixed Precision Training）
+
+在本书的多个章节里，我们谈过各种低精度格式，以及它们对储存激活值、参数与优化器状态所需内存的影响。现在是时候深入这些格式的细节，更透彻地理解它们的取舍、优点与限制了。
+
+混合精度训练，顾名思义，就是在训练时混合使用不同的精度。PyTorch 张量的预设数值精度是单精度浮点数格式（single-precision floating point format），也称为 FP32 或 float32，意思是每个储存的数字占 32 位元，也就是 4 个位元组。用来表示一个数字的位元被分成三个部分：
+
+* 符号（sign）：第一个位元，决定数字是正还是负
+* 尾数（mantissa）：决定数字的有效位数
+* 指数（exponent）：控制数字的数量级
+
+![浮点数的符号、尾数与指数位元配置](../webapp/assets/images/sign-mantissa-exponent.svg)
+
+浮点数的原理可以用数字的科学记号来轻松说明，例如 $-5.734 \times 10^{7}$：最前面是符号，接着是尾数与指数。如此一来，我们就能以自适应的精度，表示横跨广大数量级范围的数字。虽然 float32 是预设值，PyTorch 中还有一系列可用的浮点格式：
+
+| **格式** | **总位元数** | **符号** | **指数** | **尾数** |
+|---|---|---|---|---|
+| float32 | 32 | 1 | 8 | 23 |
+| float16 | 16 | 1 | 5 | 10 |
+| bfloat16 | 16 | 1 | 8 | 7 |
+| float8 (e4m3) | 8 | 1 | 4 | 3 |
+| float8 (e5m2) | 8 | 1 | 5 | 2 |
+
+> 📝 **注**：你可能会好奇 bfloat16 里的「b」是哪来的。这个格式是在 Google Brain 开发出来的，所以「b」代表的是「brain」。
+
+减少总位元数是要付出代价的（这里同样没有白吃的午餐），但我们对于怎么付这个代价有一些掌控权：可以多牺牲一些尾数的位元，也可以多牺牲一些指数的位元。正因如此，float8 才存在两种以指数与尾数命名的格式，让我们能弹性选择最合适的一种。我们可以看看每种格式所能表示的数值范围：
+
+![各浮点格式可表示的数值范围](../webapp/assets/images/mixedprecision.png)
+
+可以看到，float32 横跨了 80 个数量级；float16 牺牲了大量的范围，而 bfloat16 则保有完整的范围。两种 float8 格式把范围缩得更小：e5m2 还能维持 float16 的范围，e4m3 的范围则更小。
+
+为什么有些格式能维持范围，有些却不行？让我们透过解析度来一探究竟：在 1 到 2 之间取 10,000 个点，并把每个点四舍五入到各格式中最接近的可表示数字：
+
+![各浮点格式在 1 到 2 区间的解析度比较](../webapp/assets/images/mixedprecision_2.png)
+
+从这里可以看到，bfloat16 虽然维持了 float32 的范围（优于 float16），却是以牺牲更多精度为代价。至于 float8，情况更加严峻：在 1 到 2 的区间里，e4m3 只能表示 7 个数字，e5m2 更只有 3 个。
+
+衡量一种格式解析度的常见指标是 epsilon：也就是 $1.00$ 之后第一个可表示的数字。对 float32 格式而言，$10^{-4}$ 是一个上界（实际值是 $1.19 \times 10^{-7}$）；float16 大约是 $10^{-3}$，而 bfloat16 又比它高 10 倍。
+
+混合精度训练的想法，就是在维持全精度训练效果的同时，改用其中一些较低精度的格式。
+
+事实证明，我们**不能**完全抛弃 float32，通常仍需要让某些部分维持在全精度。这也是为什么低精度训练通常被称为**混合精度**训练。
+
+现在，让我们先看看如何用 16 位元训练模型，再看看能不能更进一步，一路降到 8 位元。
+
+### FP16 与 BF16 训练
+
+很遗憾，天真地把所有张量与运算都换成 float16 是行不通的，结果通常是损失发散。不过，最初的混合精度训练论文想出了三个技巧，来追平 float32 训练的表现：
+
+1. **FP32 权重副本**：float16 权重有两个可能的问题。训练过程中，有些权重可能变得非常小，以致被舍入为 0。然而，即使权重本身离零不算近，只要更新量非常小，两者数量级的差距也可能导致权重在加法过程中发生下溢（underflow）。权重一旦变成 0，由于再也没有梯度讯号传过来，它在之后的训练中就会一直维持是 0。
+2. **损失缩放（loss scaling）**：梯度也有类似的问题，因为梯度往往远小于 1，因此有下溢的风险。一个简单却有效的策略是：在反向传播之前先缩放损失，并在反向传播之后把梯度的缩放还原（unscale）。这确保了反向传播过程中不会发生下溢；而由于我们会在进一步处理梯度（例如裁剪）与执行优化步骤之前先还原缩放，这个缩放并不会影响训练。
+3. **累加（accumulation）**：最后，以 16 位元精度执行某些算术运算（例如取平均或加总）时，同样可能遇到下溢或上溢（overflow）。解法是在运算过程中以 float32 累加中间结果，只在最后才把结果转回 16 位元精度。
+
+有了这些技巧，我们就能获得稳定的训练，同时受惠于更快的低精度算术运算所带来的更高吞吐量。身为一位好奇的读者——而且读到这里，大概已经对榨取吞吐量有点上瘾了——你自然会问：我们能比 16 位元精度走得更远、更快吗？
+
+也许可以！
+
+### FP8 预训练
+
+即使我们把通信与计算重叠得天衣无缝，最终还是会撞上硬件本身低阶的理论 FLOPS 上限，也就是硬件上每一个个别运算的效率。这正是数值精度变得至关重要的地方。举例来说，在 NVIDIA 的 H100 GPU 上，FP8 矩阵乘法（GEMM 运算）的理论 FLOPS 是 bfloat16 的两倍，这使得低精度训练成为进一步优化的一条诱人途径。
+
+近期的研究——包括 FP8-LM、torchao 与 DeepSeek-V3——已经展示了 FP8 训练在大规模模型上的潜力。尽管如此，FP8 预训练仍带来一个重大挑战：稳定性。在较低的精度下，数值不稳定常常导致损失发散，难以追平较高精度训练的准确度。
+
+我们知道，在模型大小固定的情况下，不稳定性会随着学习率提高而增加，这让 FP8 预训练格外棘手。
+
+以下是 FP8 训练典型发散损失曲线的一个例子：
+
+![FP8 训练的发散损失曲线](../webapp/assets/images/fp8_training_loss_curves.svg)
+
+> 🔬 原文此处为交互图表（可缩放检视不同 FP8 训练设定下损失曲线的发散情形），可至[原网页](https://huggingface.co/spaces/nanotron/ultrascale-playbook)体验。
+
+第一个公开报告以 FP8 混合精度成功完成超大规模训练的，是 DeepSeek-V3。作者仔细分析了前向传播（Fprop）的每一个运算，以及反向传播中的激活值梯度（Dgrad）与权重梯度（Wgrad）运算。与 BF16 混合精度训练类似，部分聚合运算与主权重（master weights）以较高精度保存，而运算本身则以 FP8 执行。
+
+![DeepSeek-V3 的 FP8 混合精度训练流程图](../webapp/assets/images/fp8_diagram.png)
+
+为了从高精度（例如 FP32 或 BF16）切换到范围较小的低精度（例如 FP16 或 FP8），我们需要对激活值的范围做归一化，例如计算它们的绝对最大值。DeepSeek-V3 进一步引入了一种特定的量化方案：以小区块（tile）为单位对范围做归一化——输入／激活值采 $1 \times 128$、权重与缩放元素采 $128 \times 128$。这让归一化比较不会受到激活值中离群值的强烈影响。他们还提出了许多能进一步降低内存与通信开销的技巧，你可以在 DeepSeek-V3 技术报告的 3.3 节中继续深入。
+
+以下汇整几种已知的 FP8 训练作法：
+
+| 方案 | GEMM 精度 | 主模型权重 | 累积梯度 | 模型权重 | 梯度 | 优化器状态 | 总内存 |
+|---|---|---|---|---|---|---|---|
+| bfloat16 搭配 fp32 的混合精度基准 | bf16 | fp32 | fp32 | bf16 | bf16 | fp32 + fp32 | 4 + 4 + 2 + 2 + 4 + 4 = 20 位元组 |
+| 同上，但不做 FP32 梯度累积 | bf16 | fp32 | n/a | bf16 | bf16 | fp32 + fp32 | 4 + 2 + 2 + 4 + 4 = 16 位元组 |
+| Transformer Engine | fp8 | n/a | n/a | fp32 | fp32 | fp32 + fp32 | 4 + 4 + 4 + 4 = 16 位元组（减少 20%） |
+| FP8-LM 的 O3 等级 | fp8 | fp16 | fp16 | fp8 | fp8 | fp8 + fp16 | 2 + 2 + 1 + 1 + 1 + 2 = 9 位元组（减少 55%） |
+| DeepSeek-V3 | fp8 | fp32 | fp32 | fp8 | bf16 | bf16 + bf16 | 4 + 4 + 1 + 2 + 2 + 2 = 15（减少 25%） |
+| nanotron 的 FP8 | fp8 | bf16 | fp32 | fp8 | fp8 | fp8 + fp8 | 2 + 4 + 1 + 1 + 1 + 1 = 10 位元组（减少 50%） |
+
+整体而言，FP8（在 2025 年初）仍是一项实验性技术，各种方法仍在持续演进。鉴于它显而易见的好处，它很可能成为标准，并在不久之后取代 bf16 混合精度。想追踪 FP8 训练技术的开源实现，请前往 nanotron 在[这个 PR](https://github.com/huggingface/nanotron/pull/70) 中的实现。
+
+再往更远的未来看，NVIDIA 的下一代晶片 Blackwell [已经宣布](https://www.nvidia.com/en-us/data-center/technologies/blackwell-architecture/)将支援 FP4 训练，能进一步加速训练，但毫无疑问，也会带来新的训练稳定性挑战。
+
+---
+
+这最后一节，为我们在数十到数千张 GPU 上进行快速大型模型训练的漫长旅程画下了句点。是时候让我们的 GPU 集群慢慢歇息，并退后一步，总结这一路走来学到的一切了。
+
+</script>
+<script src="../assets/marked.min.js"></script>
+<script src="../assets/katex/katex.min.js"></script>
+<script src="../assets/katex/auto-render.min.js"></script>
+<script src="../assets/widgets/ch10.js"></script>
+<script src="../assets/app.js"></script>
+<script src="../assets/gh-star.js"></script>
+</body>
+</html>

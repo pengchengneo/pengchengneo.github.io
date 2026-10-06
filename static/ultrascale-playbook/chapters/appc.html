@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>附录 A2　LLM 训练的典型尺度 — Ultra-Scale Playbook 中文版</title>
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="../index.html">Ultra-Scale Playbook 中文版<span>在 GPU 集群上训练 LLM</span></a>
+  <nav class="chapnav"><a href="appb.html">← 附录 A1</a><span class="chapnav-current">附录 A2　LLM 训练的典型尺度</span><a href="appd.html">附录 A3 →</a><a class="gh-star" href="https://github.com/pengchengneo/ultrascale-playbook-zh-tw" target="_blank" rel="noopener" data-gh-repo="pengchengneo/ultrascale-playbook-zh-tw"><span class="star-ico">★</span><span class="gh-label">Star</span><b class="gh-count" hidden></b></a></nav>
+</header>
+<div class="layout">
+  <aside class="sidebar"><nav id="toc" class="toc"><h2>本章目录</h2></nav></aside>
+  <main class="main">
+    <div id="lab-banner"></div>
+    <article id="content" class="prose"></article>
+    <section id="lab" class="lab" hidden>
+      <h2 class="lab-title">🧪 交互实验室</h2>
+      <div id="lab-intro"></div>
+      <div id="lab-root"></div>
+    </section>
+    <nav class="pager"><a class="prev" href="appb.html"><span class="dir">← 上一章</span><div class="ttl">附录 A1　分布式训练性能分析</div></a><a class="next" href="appd.html"><span class="dir">下一章 →</span><div class="ttl">附录 A3　计算／通信重叠的数学</div></a></nav>
+    <footer class="pagefoot">本站为简体转换版本，基于 <a href="https://github.com/ai-twinkle">Twinkle AI Community</a>（台湾）的<strong>非官方社群翻译</strong> · 译自 Hugging Face nanotron 团队《<a href="https://huggingface.co/spaces/nanotron/ultrascale-playbook">The Ultra-Scale Playbook</a>》· 原作依 Apache 2.0 发布，译文同授权，仅供学习研究使用。</footer>
+  </main>
+</div>
+<script type="text/markdown" id="chapter-md">
+# 附录 A2　LLM 训练的典型尺度（Typical Scales in LLM Training）
+
+> 译自 Hugging Face nanotron 团队《The Ultra-Scale Playbook: Training LLMs on GPU Clusters》（Apache 2.0），原文为 [Hugging Face Space](https://huggingface.co/spaces/nanotron/ultrascale-playbook)。
+
+让我们感受一下 LLM 训练中各种东西的典型尺度。当我们谈论内存或计算量时，通常是在数「元素」（element）的个数——你可以把它们想成张量中的数值。要换算成实际的内存位元组数，还需要乘上每个数值所占的大小（例如 bf16 为 2 个位元组、fp32 为 4 个位元组）。
+
+以下是一些快速的粗略估算数字：
+
+- **输入 token**：每个批次我们会处理 $seq \cdot mbs$ 个 token，其中 $mbs$ 是微批次大小（micro-batch size），$seq$ 是序列长度。
+- **激活值（隐藏状态）**：对单一层而言，隐藏状态张量的大小为 $seq \cdot mbs \cdot h$ 个元素。
+- **模型权重与梯度**：模型中的每个权重矩阵（例如线性层中的权重）大约有 $h^2$ 个元素。这是以单一权重矩阵计。梯度的大小与权重相同。
+- **优化器状态**：对每个权重矩阵（$h^2$ 个元素）而言，如果你使用像 Adam 这类优化器搭配混合精度训练，它会以 fp32 精度保存动量（momentum）与变异数（variance）状态（$2 \times 2h^2$），再加上 fp32 的主权重（master weights）（$2h^2$）。因此，每个权重矩阵的优化器状态总计约为 $6h^2$。
+- **模型参数总量**：每个 transformer 区块会储存：
+  - 注意力参数：
+    - QKV 投影：$3h^2$ 个参数
+    - 输出投影：$h^2$ 个参数
+  - 使用 GLU（Gated Linear Unit）的 MLP 参数：
+    - Gate 与 up 投影：$8h^2$ 个参数（2 个大小为 $h \times 4h$ 的矩阵）
+    - Down 投影：$4h^2$ 个参数（1 个大小为 $4h \times h$ 的矩阵）
+  - 每个区块总计：使用 GLU MLP 时为 $16h^2$，不使用 GLU 时为 $12h^2$
+  - 完整模型：$16h^2 \cdot num\_layers$（使用 GLU 时）
+  - 额外参数：
+    - 输入嵌入（input embeddings）：$vocab\_size \cdot h$
+    - LM head：$vocab\_size \cdot h$（若未与输入嵌入绑定共用）
+    - 位置嵌入（若有使用）：$max\_seq\_len \cdot h$
+- **前向与反向传播计算量（FLOPs）**：前向传播的 FLOPs 有一个非常粗略的估算式：$2 \cdot num\_tokens \cdot num\_params$。反向传播的计算量则是它的两倍：$4 \cdot num\_tokens \cdot num\_params$。
+
+> 📝 **注**：更精确的前向＋反向传播 FLOPs 公式应为 $6 \cdot seq\_len \cdot num\_params + 12 \cdot num\_layers \cdot h \cdot seq\_len^2$，它把注意力运算在整条序列上的二次方扩展也纳入考量；但为了简化数学，我们假设 $seq\_len^2 \ll h$。
+
+</script>
+<script src="../assets/marked.min.js"></script>
+<script src="../assets/katex/katex.min.js"></script>
+<script src="../assets/katex/auto-render.min.js"></script>
+<script src="../assets/widgets/appc.js"></script>
+<script src="../assets/app.js"></script>
+<script src="../assets/gh-star.js"></script>
+</body>
+</html>

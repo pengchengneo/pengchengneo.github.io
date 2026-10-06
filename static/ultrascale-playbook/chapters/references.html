@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>参考资源　参考资源 — Ultra-Scale Playbook 中文版</title>
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="../index.html">Ultra-Scale Playbook 中文版<span>在 GPU 集群上训练 LLM</span></a>
+  <nav class="chapnav"><a href="appd.html">← 附录 A3</a><span class="chapnav-current">参考资源　参考资源</span><a class="gh-star" href="https://github.com/pengchengneo/ultrascale-playbook-zh-tw" target="_blank" rel="noopener" data-gh-repo="pengchengneo/ultrascale-playbook-zh-tw"><span class="star-ico">★</span><span class="gh-label">Star</span><b class="gh-count" hidden></b></a></nav>
+</header>
+<div class="layout">
+  <aside class="sidebar"><nav id="toc" class="toc"><h2>本章目录</h2></nav></aside>
+  <main class="main">
+    <div id="lab-banner"></div>
+    <article id="content" class="prose"></article>
+    <section id="lab" class="lab" hidden>
+      <h2 class="lab-title">🧪 交互实验室</h2>
+      <div id="lab-intro"></div>
+      <div id="lab-root"></div>
+    </section>
+    <nav class="pager"><a class="prev" href="appd.html"><span class="dir">← 上一章</span><div class="ttl">附录 A3　计算／通信重叠的数学</div></a></nav>
+    <footer class="pagefoot">本站为简体转换版本，基于 <a href="https://github.com/ai-twinkle">Twinkle AI Community</a>（台湾）的<strong>非官方社群翻译</strong> · 译自 Hugging Face nanotron 团队《<a href="https://huggingface.co/spaces/nanotron/ultrascale-playbook">The Ultra-Scale Playbook</a>》· 原作依 Apache 2.0 发布，译文同授权，仅供学习研究使用。</footer>
+  </main>
+</div>
+<script type="text/markdown" id="chapter-md">
+# 参考资源（References）
+
+> 译自 Hugging Face nanotron 团队《The Ultra-Scale Playbook: Training LLMs on GPU Clusters》（Apache 2.0），原文为 [Hugging Face Space](https://huggingface.co/spaces/nanotron/ultrascale-playbook)。
+
+## 里程碑 LLM 扩展论文（Landmark LLM Scaling Papers）
+
+[**Megatron-LM**](https://arxiv.org/abs/1909.08053)
+
+提出张量并行（tensor parallelism）以及用于训练大型语言模型的高效模型并行技术。
+
+[**Megatron-Turing NLG 530B**](https://developer.nvidia.com/blog/using-deepspeed-and-megatron-to-train-megatron-turing-nlg-530b-the-worlds-largest-and-most-powerful-generative-language-model/)
+
+描述如何结合 DeepSpeed 与 Megatron-LM 框架训练出 5,300 亿参数的模型。
+
+[**PaLM**](https://arxiv.org/abs/2204.02311)
+
+介绍 Google 的 Pathways Language Model，在数百项语言任务与推理能力上展现强劲表现。
+
+[**Gemini**](https://arxiv.org/abs/2312.11805)
+
+介绍 Google 的多模态模型架构，能够处理文字、图像、音讯与影片输入。
+
+[**Llama 3**](https://arxiv.org/abs/2407.21783)
+
+The Llama 3 Herd of Models（Llama 3 系列模型）。
+
+[**DeepSeek-V3**](https://arxiv.org/abs/2412.19437v1)
+
+DeepSeek 针对 DeepSeek-V3 模型架构与训练过程的技术报告。
+
+## 训练框架（Training Frameworks）
+
+[**Nanotron**](https://github.com/huggingface/nanotron)
+
+我们用于训练大型语言模型的框架，具备多种并行化策略。
+
+[**Megatron-LM**](https://github.com/NVIDIA/Megatron-LM)
+
+NVIDIA 用于训练大型语言模型的框架，具备多种并行化策略。
+
+[**DeepSpeed**](https://www.deepspeed.ai/)
+
+Microsoft 的深度学习优化函数库，具备 ZeRO 各阶段优化与多种并行化策略。
+
+[**FairScale**](https://github.com/facebookresearch/fairscale/tree/main)
+
+用于大规模训练的 PyTorch 扩充函数库，提供多种并行化与优化技术。
+
+[**ColossalAI**](https://colossalai.org/)
+
+整合式大规模模型训练系统，内含多种优化技术。
+
+[**torchtitan**](https://github.com/pytorch/torchtitan)
+
+PyTorch 原生的大型模型训练函数库。
+
+[**GPT-NeoX**](https://github.com/EleutherAI/gpt-neox)
+
+EleutherAI 用于训练大型语言模型的框架，曾用来训练 GPT-NeoX-20B。
+
+[**LitGPT**](https://github.com/Lightning-AI/litgpt)
+
+Lightning AI 对最先进开源 LLM 的实现，著重可重现性。
+
+[**DiLoco**](https://github.com/PrimeIntellect-ai/OpenDiLoCo)
+
+使用 DiLoCo 跨运算集群训练语言模型。
+
+[**torchgpipe**](https://github.com/kakaobrain/torchgpipe)
+
+GPipe 的 PyTorch 实现。
+
+[**OSLO**](https://github.com/EleutherAI/oslo)
+
+OSLO：Open Source for Large-scale Optimization（大规模优化开源项目）。
+
+## 调试（Debugging）
+
+[**Speed profiling**](https://pytorch.org/tutorials/recipes/recipes/profiler_recipe.html)
+
+PyTorch 官方教学，说明如何使用 profiler 分析模型性能与瓶颈。
+
+[**Memory profiling**](https://pytorch.org/blog/understanding-gpu-memory-1/)
+
+理解与优化 PyTorch GPU 内存使用的完整指南。
+
+[**Memory profiling walkthrough on a simple example**](https://huggingface.co/blog/train_memory)
+
+以简单范例可视化并理解 PyTorch 的 GPU 内存。
+
+[**TensorBoard Profiler Tutorial**](https://pytorch.org/tutorials/intermediate/tensorboard_profiler_tutorial.html)
+
+使用 TensorBoard 性能分析工具剖析 PyTorch 模型的指南。
+
+## 分布式技术（Distribution Techniques）
+
+[**Data parallelism**](https://siboehm.com/articles/22/data-parallel-training)
+
+对深度学习中数据并行训练的完整解说。
+
+[**ZeRO**](https://arxiv.org/abs/1910.02054)
+
+提出 Zero Redundancy Optimizer（零冗余优化器），以内存优化来训练大型模型。
+
+[**FSDP**](https://arxiv.org/abs/2304.11277)
+
+PyTorch 的 Fully Sharded Data Parallel（完全分片数据并行）训练实现。
+
+[**Tensor and Sequence Parallelism + Selective Recomputation**](https://arxiv.org/abs/2205.05198)
+
+结合多种并行化策略以高效训练大规模模型的进阶技术。
+
+[**Pipeline parallelism**](https://developer.nvidia.com/blog/scaling-language-model-training-to-a-trillion-parameters-using-megatron/#pipeline_parallelism)
+
+NVIDIA 针对大型模型训练实现流水线并行（pipeline parallelism）的指南。
+
+[**Breadth first Pipeline Parallelism**](https://arxiv.org/abs/2211.05953)
+
+包含对各种 PP 排程（schedule）的广泛讨论。
+
+[**All-reduce**](https://andrew.gibiansky.com/blog/machine-learning/baidu-allreduce/)
+
+详细解说分布式训练中使用的 ring all-reduce 演算法。
+
+[**Ring-flash-attention**](https://github.com/zhuzilin/ring-flash-attention)
+
+结合 ring attention 机制与 Flash Attention 的实现，用于高效训练。
+
+[**Ring attention tutorial**](https://coconut-mode.com/posts/ring-attention/)
+
+解说 ring attention 概念与实现的教学。
+
+[**ZeRO and 3D**](https://www.deepspeed.ai/tutorials/large-models-w-deepspeed/#understanding-performance-tradeoff-between-zero-and-3d-parallelism)
+
+DeepSpeed 对于理解 ZeRO 与 3D 并行策略之间取舍的指南。
+
+[**Mixed precision training**](https://arxiv.org/abs/1710.03740)
+
+提出用于深度学习模型的混合精度训练技术。
+
+[**Visualizing 6D Mesh Parallelism**](https://main-horse.github.io/posts/visualizing-6d/)
+
+解说 6D 并行网格（parallel mesh）中所涉及的集体通信。
+
+## 硬件（Hardware）
+
+[**Fire-Flyer - a 10,000 PCI chips cluster**](https://www.arxiv.org/abs/2408.14158)
+
+DeepSeek 关于设计一座具备 1 万张 PCI GPU 集群的报告。
+
+[**Meta's 24k H100 Pods**](https://engineering.fb.com/2024/03/12/data-center-engineering/building-metas-genai-infrastructure/)
+
+Meta 详细介绍其以 NVIDIA H100 GPU 打造的大规模 AI 基础设施。
+
+[**Semianalysis - 100k H100 cluster**](https://www.semianalysis.com/p/100000-h100-clusters-power-network)
+
+分析大规模 H100 GPU 集群及其对 AI 基础设施的影响。
+
+[**Modal GPU Glossary**](https://modal.com/gpu-glossary/readme)
+
+写给人看的 CUDA 文件。
+
+## 其他（Others）
+
+[**Stas Bekman's Handbook**](https://github.com/stas00/ml-engineering)
+
+涵盖 LLM 训练各面向的完整手册。
+
+[**Bloom training chronicles**](https://github.com/bigscience-workshop/bigscience/blob/master/train/tr11-176B-ml/chronicles.md)
+
+详细记录 BLOOM 模型训练过程与遭遇的各种挑战。
+
+[**OPT logbook**](https://github.com/facebookresearch/metaseq/blob/main/projects/OPT/chronicles/OPT175B_Logbook.pdf)
+
+Meta 详细记录 OPT-175B 模型训练过程的日志。
+
+[**Harm's law for training smol models longer**](https://www.harmdevries.com/post/model-size-vs-compute-overhead/)
+
+探讨模型规模与训练额外开销之间的关系。
+
+[**Harm's blog for long context**](https://www.harmdevries.com/post/context-length/)
+
+从数据与训练成本的角度探讨长上下文（long context）训练。
+
+[**GPU Mode**](https://www.youtube.com/@GPUMODE/videos)
+
+一个 GPU 读书会与社群。
+
+[**EleutherAI Youtube channel**](https://youtube.com/playlist?list=PLvtrkEledFjqOLuDB_9FWL3dgivYqc6-3&si=fKWPotx8BflLAUkf)
+
+ML Scalability & Performance 读书会（机器学习可扩展性与性能读书会）。
+
+[**Google Jax Scaling book**](https://jax-ml.github.io/scaling-book/)
+
+How to Scale Your Model（如何扩展你的模型）。
+
+[**@fvsmassa & @TimDarcet FSDP**](https://github.com/facebookresearch/capi/blob/main/fsdp.py)
+
+仅约 500 行代码的独立 FSDP 实现。
+
+[**thonking.ai**](https://www.thonking.ai/)
+
+Horace He 的部落格文章选辑——Making GPUs go BRRR（让 GPU 火力全开）。
+
+[**Aleksa's ELI5 Flash Attention**](https://gordicaleksa.medium.com/eli5-flash-attention-5c44017022ad)
+
+对 Flash Attention 浅显易懂的解说。
+
+[**TunibAI's 3D parallelism tutorial**](https://github.com/tunib-ai/large-scale-lm-tutorials)
+
+以 PyTorch 进行大规模语言建模的教学。
+
+</script>
+<script src="../assets/marked.min.js"></script>
+<script src="../assets/katex/katex.min.js"></script>
+<script src="../assets/katex/auto-render.min.js"></script>
+<script src="../assets/app.js"></script>
+<script src="../assets/gh-star.js"></script>
+</body>
+</html>

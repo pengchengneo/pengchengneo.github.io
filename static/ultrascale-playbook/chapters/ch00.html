@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>导论　导论与全书鸟瞰 — Ultra-Scale Playbook 中文版</title>
+<link rel="stylesheet" href="../assets/katex/katex.min.css">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="../index.html">Ultra-Scale Playbook 中文版<span>在 GPU 集群上训练 LLM</span></a>
+  <nav class="chapnav"><span class="chapnav-current">导论　导论与全书鸟瞰</span><a href="ch01.html">第 1 章 →</a><a class="gh-star" href="https://github.com/pengchengneo/ultrascale-playbook-zh-tw" target="_blank" rel="noopener" data-gh-repo="pengchengneo/ultrascale-playbook-zh-tw"><span class="star-ico">★</span><span class="gh-label">Star</span><b class="gh-count" hidden></b></a></nav>
+</header>
+<div class="layout">
+  <aside class="sidebar"><nav id="toc" class="toc"><h2>本章目录</h2></nav></aside>
+  <main class="main">
+    <div id="lab-banner"></div>
+    <article id="content" class="prose"></article>
+    <section id="lab" class="lab" hidden>
+      <h2 class="lab-title">🧪 交互实验室</h2>
+      <div id="lab-intro"></div>
+      <div id="lab-root"></div>
+    </section>
+    <nav class="pager"><span></span><a class="next" href="ch01.html"><span class="dir">下一章 →</span><div class="ttl">第 1 章　第一步：单 GPU 训练</div></a></nav>
+    <footer class="pagefoot">本站为简体转换版本，基于 <a href="https://github.com/ai-twinkle">Twinkle AI Community</a>（台湾）的<strong>非官方社群翻译</strong> · 译自 Hugging Face nanotron 团队《<a href="https://huggingface.co/spaces/nanotron/ultrascale-playbook">The Ultra-Scale Playbook</a>》· 原作依 Apache 2.0 发布，译文同授权，仅供学习研究使用。</footer>
+  </main>
+</div>
+<script type="text/markdown" id="chapter-md">
+# 导论与全书鸟瞰（Introduction & High-Level Overview）
+
+> 译自 Hugging Face nanotron 团队《The Ultra-Scale Playbook: Training LLMs on GPU Clusters》（Nouamane Tazi 等著，Apache 2.0），原文为 [Hugging Face Space](https://huggingface.co/spaces/nanotron/ultrascale-playbook)。
+
+**《The Ultra-Scale Playbook: Training LLMs on GPU Clusters》**（超大规模训练手册：在 GPU 集群上训练大型语言模型）
+
+> 🔬 原文此处为交互图表（书名页横幅）：我们在最多 512 颗 GPU 上执行了超过 4,000 次规模化实验，并量测吞吐量（throughput，以标记大小表示）与 GPU 使用率（以标记颜色表示）；注意在此可视化中，两者皆已依模型大小归一化。可至[原网页](https://huggingface.co/spaces/nanotron/ultrascale-playbook)体验。
+
+数千颗 GPU 完美和谐地运转著——这就是训练当今最强大 AI 模型所需要的景象：一场运算能力的交响乐，而直到不久之前，这场演出仍是菁英研究实验室的专属领域。开源已经改变了这个局面，但并未彻底改变。没错，你可以下载最新的 [Llama](https://huggingface.co/meta-llama) 或 [DeepSeek](https://huggingface.co/deepseek-ai) 模型；没错，你也可以阅读它们的[技术报告](https://ai.meta.com/research/publications/the-llama-3-herd-of-models/)与[实验报告](https://github.com/deepseek-ai/DeepSeek-R1/blob/main/DeepSeek_R1.pdf)。但最具挑战性的部分——训练代码，以及协调 GPU 训练这些庞大系统所需的知识与技术——仍然笼罩在复杂性之中，散落于一系列彼此脱节的论文与往往不公开的代码库里。
+
+> 阅读时间：2–4 天。为获得最佳阅读体验，建议不要使用手机阅读。
+
+这本开源书籍就是要改变这一切。我们将从基础开始，一步步带你掌握把大型语言模型（Large Language Model, LLM）的训练从单颗 GPU 扩展到数十、数百甚至数千颗 GPU 所需的知识，并以实用的代码范例与可重现的基准测试（benchmark）来佐证理论。
+
+随着训练这些模型所用的集群规模不断成长，人们发明了各式各样的技术——例如数据并行（Data Parallelism, DP）、张量并行（Tensor Parallelism, TP）、流水线并行（Pipeline Parallelism, PP）与上下文并行（Context Parallelism, CP），以及 ZeRO 与内核融合（kernel fusion）——来确保 GPU 随时维持高使用率。这不仅大幅缩短了训练时间，也让这些昂贵的硬件发挥最大效益。更进一步地说，扩展 AI 训练的挑战不仅止于打造最初的模型；各团队也发现，在特定领域数据上微调（fine-tuning）大型模型往往能得到最佳成果，而这通常也会用到相同的分布式训练技术。在本书中，我们会循序渐进地介绍所有这些技术——从最简单的到最精巧的——同时维持单一叙事主轴，让你理解每种方法的来龙去脉。
+
+> 如果你有任何问题或意见，欢迎到[社群讨论区（Community tab）](https://huggingface.co/spaces/nanotron/ultrascale-playbook/discussions?status=open&type=discussion)开一个讨论串！
+
+我们假设你对当前的 LLM 架构已有一些基本认识，也大致熟悉深度学习模型的训练方式，但对分布式训练可以是全然的新手。如有需要，模型训练的基础知识可以在 [DeepLearning.ai](https://www.deeplearning.ai) 的优质课程或 [PyTorch 教学单元](https://pytorch.org/tutorials/beginner/basics/intro.html)中找到。本书可视为三部曲的第二部，接续我们第一篇探讨预训练数据处理的部落格文章，也就是所谓的「[FineWeb 部落格文章](https://huggingface.co/spaces/HuggingFaceFW/blogpost-fineweb-v1)」。读完这两篇之后，你几乎就掌握了理解当今高性能 LLM 如何打造的所有核心知识，只差数据混配（data mixing）与架构选择这几味最后的香料，就能凑齐完整的配方（敬请期待第三部……）。
+
+> 我们由衷感谢整个 [distill.pub](https://distill.pub/) 团队打造了本文所依据的版面模板。
+
+本书建立在以下**三大基础**之上：
+
+**理论与概念的快速导览：** 在深入代码与实验之前，我们希望先从高层次理解每种方法的运作原理，以及各自的优势与限制。你会学到语言模型的哪些部分会吃掉你的内存，以及这在训练过程中的哪个时间点发生。你也会学到我们如何透过把模型并行化来解决内存限制，并透过扩增 GPU 数量来提高吞吐量。读完之后，你就能理解下面这个用来计算 Transformer 模型内存用量分解（memory breakdown）的交互元件（widget）是如何运作的：
+
+> 📝 **注**：这个交互元件目前还缺少流水线并行的部分，就当作留给读者的练习吧。
+
+> 🔬 原文此处为交互图表（「Memory usage breakdown」内存用量分解元件）：可调整注意力头数（a）、隐藏维度（h）、前馈维度（h_ff）、层数（L）、序列长度（s）、词汇表大小（v）、微批次大小（b）、混合精度、重算策略（None／Selective／Full）、ZeRO 阶段（0／1／2／3）、前馈激活函数（ReLU／GELU／SwiGLU）、序列并行、张量并行（t）、数据并行（d）、优化器参数（k）等设定，也可套用 Llama 3 Tiny／8B／70B／405B 等预设值，即时观察模型的内存用量分解。可至[原网页](https://huggingface.co/spaces/nanotron/ultrascale-playbook)体验。
+
+（如果你完全看不懂这个交互元件在做什么，别担心——这正是我们写这本书的原因。）
+
+虽然这个交互元件提供的是理论上的分解，我们也另外制作了[这个工具](https://huggingface.co/spaces/nanotron/predict_memory)，可用来预测实际训练过程中的内存用量：
+
+[![内存用量预测工具](../webapp/assets/images/predict_memory_tool.png)](https://huggingface.co/spaces/nanotron/predict_memory)
+
+**清楚的代码实现：** 理论是一回事，但当我们实际动手实现时，才会发现各式各样的边角案例（edge case）与重要细节。因此我们会尽可能附上实现参考连结。视情况而定，我们会使用两套参考代码：
+
+* [picotron](https://github.com/huggingface/picotron) 代码库是为教学而打造，因此通常会把每个概念实现在单一、自成一体的短档案中。
+
+* 另一方面，若要参考生产环境等级（production-ready）的代码，我们会引用 [nanotron](https://github.com/huggingface/nanotron) 的实现——这是 Hugging Face 实际使用的生产级训练代码库。
+
+> 如果比起阅读本书或 picotron 的代码，你更想透过影片学习分布式训练，可以看看 [Ferdinand 的 YouTube 频道](https://www.youtube.com/watch?v=u2VSwDDpaBM&list=PL-_armZiJvAnhcRr6yTJ0__f3Oi-LLi9S)。
+
+**真实的训练效率基准测试：** 最后，如何*实际*扩展你的 LLM 训练规模，取决于你的基础设施——例如晶片种类、互连（interconnect）等——因此我们无法给出一体适用的单一配方。我们能给你的，是一套对多种配置进行基准测试的方法，而这正是我们在自己的集群上所做的事！我们执行了超过 4,100 次分布式实验（若计入测试执行则超过 16,000 次），最多动用 512 颗 GPU，扫描了许多可能的分布式训练布局与模型大小。
+
+> 🔬 原文此处为交互图表（基准测试结果浏览器）：可交互探索上述 4,100 多次分布式实验在各种训练布局与模型大小下的结果，可至[原网页](https://huggingface.co/spaces/nanotron/ultrascale-playbook)体验。
+
+如你所见，本书要涵盖的内容相当广泛。在进入分布式训练的壕沟之前，让我们先快速地从高处鸟瞰一下本书将要面对的各项挑战。
+
+## 高层次总览（High-Level Overview）
+
+本书涵盖的所有技术，都是在解决以下三大关键挑战中的一项或多项；这些挑战也会在全书中反复出现：
+
+1. **内存用量（memory usage）**：这是一项硬性限制——如果一个训练步骤（training step）连内存都放不下，训练就无法进行。
+2. **运算效率（compute efficiency）**：我们希望硬件把大部分时间花在运算上，因此必须减少花在数据传输、或等待其他 GPU 完成工作的时间。
+3. **通信负担（communication overhead）**：我们希望把通信负担降到最低，因为它会让 GPU 闲置。为此，我们会设法善用节点内（intra-node，较快）与节点间（inter-node，较慢）的带宽，并尽可能让通信与运算重叠（overlap）。
+
+在许多地方我们会看到，这三者（运算、通信、内存）之间可以互相取舍——例如透过重算（recomputation）或张量并行。找到正确的平衡点，正是扩展训练规模的关键。
+
+由于本书内容非常庞大，我们制作了一份[速查表（cheatsheet）](../webapp/assets/images/ultra-cheatsheet.svg)，帮助你导览全书并掌握整体重点。在这片惊涛骇浪中航行时，请把它贴身带著！
+
+[![速查表](../webapp/assets/images/ultra-cheatsheet.svg)](../webapp/assets/images/ultra-cheatsheet.svg)
+
+</script>
+<script src="../assets/marked.min.js"></script>
+<script src="../assets/katex/katex.min.js"></script>
+<script src="../assets/katex/auto-render.min.js"></script>
+<script src="../assets/widgets/ch00.js"></script>
+<script src="../assets/app.js"></script>
+<script src="../assets/gh-star.js"></script>
+</body>
+</html>
