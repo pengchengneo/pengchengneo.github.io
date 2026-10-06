@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <script src="distill.bundle.js" type="module" fetchpriority="high" blocking></script>
+    <script src="main.bundle.js" type="module" fetchpriority="low" defer></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="utf8">
+    <base target="_blank">
+    <title>FineWeb：大规模提炼网页以获取优质文本数据</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+<nav style="padding:12px 20px;display:flex;flex-wrap:wrap;gap:16px;border-bottom:1px solid #ddd;font:14px/1.6 system-ui,sans-serif" aria-label="来源与导航"><a href="/posts/fineweb-cn/">← 返回博客介绍</a><a href="https://huggingface.co/spaces/Ki-Seki/blogpost-fineweb-v1">中文译本：Ki-Seki</a><a href="https://huggingface.co/spaces/HuggingFaceFW/blogpost-fineweb-v1">Hugging Face 英文原文</a></nav>
+<d-front-matter>
+    <script id='distill-front-matter' type="text/json">{
+    "title": "🍷 FineWeb：大规模提炼网页以获取优质文本数据",
+    "description": "本博客涵盖了关于大规模处理和评估数据质量的讨论，🍷 FineWeb的构建方法（列出并解释我们所有的设计选择），以及创建其📚 FineWeb-Edu子集的过程。",
+    "published": "2024年5月28日",
+    "affiliation": {"name": "HuggingFace"},
+    "authors": [
+      {
+        "author":"吉尔赫梅·佩内多",
+        "authorURL":"https://huggingface.co/guipenedo"
+      },
+      {
+        "author":"海涅克·基德利切克",
+        "authorURL":"https://huggingface.co/hynky"
+      },
+      {
+        "author":"卢布娜·本·阿拉尔",
+        "authorURL":"https://huggingface.co/loubnabnl"
+      },
+      {
+        "author":"安东·洛日科夫",
+        "authorURL":"https://huggingface.co/anton-l"
+      },
+      {
+        "author":"科林·拉费尔",
+        "authorURL":"https://huggingface.co/craffel"
+      },
+      {
+        "author":"莱昂德罗·韦拉",
+        "authorURL":"https://huggingface.co/lvwerra"
+      },
+      {
+        "author":"托马斯·沃尔夫",
+        "authorURL":"https://huggingface.co/thomwolf"
+      }
+    ],
+    "katex": {
+      "delimiters": [
+        {"left": "$$", "right": "$$", "display": false}
+      ]
+    }
+  }
+    </script>
+</d-front-matter>
+<d-title>
+    <h1 class="l-page" style="text-align: center;">🍷 FineWeb：大规模提炼网页以获取优质文本数据</h1>
+    <div id="title-plot" class="main-plot-container l-screen">
+        <figure>
+            <img src="assets/images/banner.png" alt="FineWeb">
+        </figure>
+        <div id="clusters-plot">
+            <img src="assets/images/clusters.png" alt="聚类图">
+        </div>
+    </div>
+</d-title>
+<d-byline></d-byline>
+<d-article>
+    <d-contents>
+    </d-contents>
+
+    <p>大型语言模型（LLM）的性能在很大程度上取决于其预训练数据集的质量和规模。
+        然而，像Llama 3<d-cite bibtex-key="llama3modelcard"></d-cite>和Mixtral<d-cite bibtex-key="jiang2024mixtral"></d-cite>这样的最先进开源LLM的预训练数据集并未公开，而且关于它们是如何创建的信息也非常有限。</p>
+        <aside>阅读时间：45分钟。为获得最佳阅读体验，建议不要使用手机。</aside>
+
+        <p>最近，我们发布了 <a href="https://huggingface.co/datasets/HuggingFaceFW/fineweb"><strong>🍷 FineWeb</strong></a>，这是一个新的大规模（<strong>15万亿个标记，44TB磁盘空间</strong>）的LLM预训练数据集。FineWeb源自96个 <a href="https://commoncrawl.org/">CommonCrawl</a> 快照，并且与其他开源预训练数据集相比，使用FineWeb训练的LLM表现更优。为了让机器学习领域更加透明，并推动对如何训练高质量大型语言模型的公开理解，我们仔细记录并分析了FineWeb中使用的所有设计选择，包括对去重和过滤策略的深入研究。本长篇报告深入探讨了如何为LLM预训练创建一个大规模、高质量的网页级数据集。数据集本身🍷 FineWeb可在 <a href="https://huggingface.co/datasets/HuggingFaceFW/fineweb">此处</a> 获取。
+
+        <aside>我们非常感谢整个 <a href="https://distill.pub/">distill.pub</a> 团队（特别是克里斯托弗·奥拉、尚·卡特和路德维希·舒伯特）创建了我们撰写此博客文章所基于的模板。也感谢他们用精心制作的文章和博客启发了我们。</aside>
+
+        <p>在本报告中，我们还介绍了 <a href="https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu"><strong>📚 FineWeb-Edu</strong></a>，它是FineWeb的一个子集，通过可扩展的自动化高质量教育价值标注构建而成，并且在许多教育基准测试（如MMLU、ARC和OpenBookQA）上优于所有公开可用的网页数据集。
+        <a href="https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu">📚 FineWeb-Edu</a> 有两种规模/过滤级别可供选择：<strong>1.3万亿（教育内容非常高）和5.4万亿（教育内容高）个标记</strong>（所有标记均使用GPT2分词器 <d-cite bibtex-key="radford2019language"></d-cite> 进行测量）。您可以在 <a href="https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu">此处</a> 下载。</p>
+    <p>两个数据集均根据宽松的 <a href="https://opendatacommons.org/licenses/by/1-0/">ODC-By 1.0许可协议</a> 发布。</p>
+
+    <p><strong>总结：</strong> 本博客涵盖了关于大规模处理和评估数据质量的讨论，🍷 FineWeb的构建方法（列出并解释我们所有的设计选择），以及创建其📚 FineWeb-Edu子集的过程。</p>
+
+    <h2>网页数据</h2>
+    <h3>寻找原始数据</h3>
+    <p>关于用于训练LLM的网页数据集，一个常见的问题是“他们从哪里获取所有这些数据？” 通常有两种选择：</p>
+    <ul>
+        <li>您可以自己进行网页抓取，就像OpenAI或Anthropic等公司所做的那样（参见 <a
+                href="https://platform.openai.com/docs/gptbot">此处</a> 和 <a
+                href="https://darkvisitors.com/agents/claudebot">此处</a>）
+        </li>
+    </ul>
+    <ul>
+        <li>您可以使用公共的网页抓取存储库，例如由非营利组织 <a href="https://commoncrawl.org/">CommonCrawl</a> 维护的存储库。</li>
+    </ul>
+    <p>为了构建🍷 FineWeb，我们遵循了许多LLM训练团队过去的做法，以 <a href="https://commoncrawl.org/">CommonCrawl</a>（CC）作为起点。
+        非营利组织Common Crawl自2007年以来一直在抓取网页，通常每1到2个月发布一次新的抓取数据，其中包含通过自动网页抓取获得的200到400TiB的文本内容。 </p>
+    <p>例如，最新的CC抓取数据（2024年4月）包含27亿个网页，总计386TiB的未压缩HTML文本内容<d-footnote>请注意，每次抓取的数据大小会有所不同。另外，在本报告中，我们可以互换使用“转储”或“抓取”这两个术语。</d-footnote>。
+      自2013年以来，已经发布了96次抓取数据，2008年至2012年期间发布了3次抓取数据，这些数据采用不同（较旧）的格式。
+      <d-footnote>我们尚未处理这3次较旧的抓取数据。</d-footnote> </p>
+  
+    <h3>大规模处理</h3>
+    <p>鉴于涉及的数据量巨大，我们必须克服的主要挑战之一是拥有一个模块化、可扩展的代码库，该代码库能够让我们快速迭代处理决策，轻松尝试新想法，同时适当地并行化工作负载，并提供对数据的清晰洞察。 </p>
+    <p>为此，我们开发了 <a
+            href="https://github.com/huggingface/datatrove"><code>datatrove</code></a><d-cite bibtex-key="penedo2024datatrove"></d-cite>，这是一个开源的数据处理库，它使我们能够无缝地将过滤和去重设置扩展到数千个CPU核心。创建🍷 FineWeb所涉及的所有数据处理步骤都使用了这个 <a
+                href="https://github.com/huggingface/datatrove">库</a>。您可以在 <a href="https://github.com/huggingface/datatrove/blob/main/examples/fineweb.py"><code>datatrove</code> 存储库</a> 中找到我们使用的具体脚本。</p>
+
+    <h3>什么是优质数据？</h3>
+    <p>这可能是创建数据集时需要牢记的主要问题。在大多数情况下，特别是在大型语言模型预训练的背景下<d-footnote>请注意，本报告专注于用于预训练大型语言模型的网页级数据集（“网页级”通常指从网页获取的超过1000亿个标记）这一特定领域。我们所说的预训练是指从随机权重开始训练模型的第一步。我们并不打算涵盖其他数据集创建领域，也不认为本文件中提出的经验教训或假设可以扩展到该特定领域之外的任何领域。</d-footnote>，“高质量”并不是一个定义明确的术语<d-cite bibtex-key="albalak2024survey"></d-cite><d-cite bibtex-key="mitchell2023measuring"></d-cite>，甚至不是一个可以通过直接的人类观察就能清晰感知的文档属性<d-cite bibtex-key="longpre2023pretrainers"></d-cite>。</p>
+    <p>在给定的被认为“干净”的语料库（通常是维基百科<d-footnote>尽管如我们上面提到的，“干净”的概念定义非常模糊，因此不应将其等同于维基百科类型的文本。</d-footnote>）上训练模型，并使用该模型检查我们试图整理的数据集的困惑度，这种做法仍然很常见<d-cite bibtex-key="wenzek2019ccnet"></d-cite>。不幸的是，这并不总是与在一组感兴趣的下游任务上的性能提升相关<d-cite bibtex-key="soldaini2024dolma"></d-cite>。因此，另一种常用的方法是在数据集的代表性子集上训练小模型<d-footnote>与当今标准大小的LLM相比，“小”模型指的是参数约为10 - 20亿的模型。在本工作中，“小”指的是约10 - 20亿个参数。</d-footnote>，并在一组评估任务上对其进行评估。使用小模型是因为训练成本和时间是模型大小的函数。在第二种方法中，重要的是选择一组多样化且具有代表性的数据集评估任务，并尽量避免过度拟合任何一个单独的基准测试，因为这可能会损害预训练后获得的LLM的通用性。</p>
+    <p>另一种比较不同数据集的方法是在每个数据集上训练一个模型，并让人类对模型的生成结果进行评分和比较（例如在 <a
+                href="https://chat.lmsys.org/">LMSYS Chatbot Arena</a> 上）<d-cite bibtex-key="chiang2024chatbot"></d-cite>。可以说，这将在代表实际模型使用方面提供最可靠的结果，但不幸的是，以这种方式获得消融结果既昂贵又缓慢。此外，这通常还要求模型经过指令微调阶段以获得对话能力，因为预训练模型并非直接设计用于遵循指令，因此对提示细节更为敏感<d-cite bibtex-key="ouyang2022training"></d-cite>。</p>
+    <p>在这项工作中，我们采用了训练小模型并在一组“早期信号”基准测试任务上对其进行评估的方法。我们认为，在牢记上述关于在评估基准上过度拟合的注意事项的情况下，这是衡量用于训练这些模型的数据质量的合理代理。</p>
+    <h3>消融实验和评估设置</h3>
+    <p>为了比较给定处理步骤的影响，我们在数据集的两个版本上训练了两个模型，一个版本应用了额外的步骤（我们希望评估的步骤），另一个版本则去除了该步骤。除了数据之外，这两个模型在其他方面完全相同：参数数量相同、架构超参数相同，并且在每个版本的数据中随机采样相同数量的标记进行单轮训练 —— 因此唯一的区别在于训练数据。然后，我们在相同的任务集上评估每个模型，并比较平均得分。</p>
+    <p>我们的消融模型使用 <a
+            href="https://github.com/huggingface/nanotron"><code>nanotron</code></a> 进行训练。我们的“消融模型”有18.2亿个参数（包括嵌入层），使用Llama架构，序列长度为2048，全局批量大小约为200万个标记，并使用GPT2分词器。对于大多数消融实验，我们在约280亿个标记上进行训练（大致是该模型大小的Chinchilla<d-cite bibtex-key="hoffmann2022training"></d-cite>最优训练大小）。为了确认每次过滤步骤后的相对性能提升，我们如下面所述在3500亿个标记上进行了更长时间的训练。</p>
+        <aside>我们将很快在Nanotron中提供重现这些消融模型的配置。</aside>
+    <p>我们使用 <a
+            href="https://github.com/huggingface/lighteval/"><code>lighteval</code></a> 对模型进行评估。我们通过选择能够在相对较小规模（“小”模型仅在“几十亿”个标记上训练）下提供良好信号的基准测试，精心挑选了一组用于消融实验的基准测试。我们通常使用以下标准从 <code>lighteval</code> 中所有可用的基准测试中选择这些基准测试：</p>
+    <ul>
+        <li>在相同数据集的不同采样上训练的运行结果之间的方差较小：我们希望在数据子集上的运行结果能够代表整个数据集，并且最终得分在可能的范围内，对精确数据点选择的敏感性低于对过滤器效果的敏感性。
+        </li>
+    </ul>
+    <ul>
+        <li>在训练过程中性能单调（或接近单调）增加：
+            理想情况下，随着所见标记数量的增加，高信号基准测试的性能不应下降（这表明在小尺度下结果不可靠）。
+        </li>
+    </ul>
+    <ul>
+        <li>在该任务上的性能至少比随机基线高出几个标准差：鉴于我们的小消融模型和训练，我们通常在任何基准测试中都无法达到极高的分数，但我们希望确保获得的分数高于随机噪声。
+        </li>
+    </ul>
+    <p>经过考虑，我们选择了以下基准测试列表：</p>
+    <ul>
+        <li>常识问答（CommonSense QA）<d-cite bibtex-key="talmor-etal-2019-commonsenseqa"></d-cite></li>
+        <li>超级难题（HellaSwag）<d-cite bibtex-key="zellers-etal-2019-hellaswag"></d-cite></li>
+        <li>开放书籍问答（OpenBook QA）<d-cite bibtex-key="OpenBookQA2018"></d-cite></li>
+        <li>物理常识问答（PIQA）<d-cite bibtex-key="bisk2019piqa"></d-cite></li>
+        <li>社交常识问答（SIQA）<d-cite bibtex-key="sap2019socialiqa"></d-cite></li>
+        <li>温诺格兰德（WinoGrande）<d-cite bibtex-key="sakaguchi2019winogrande"></d-cite></li>
+        <li>美国学术评估测试（ARC）<d-cite bibtex-key="clark2018think"></d-cite></li>
+        <li>大规模多任务语言理解（MMLU）<d-cite bibtex-key="hendrycks2021measuring"></d-cite></li>
+    </ul>
+    <p>为了确保我们的检查点评估在有限的时间内完成，我们将较长的基准测试限制在1000个样本（在单个8GPU节点上进行评估，时钟时间不到5分钟，与训练并行进行）。</p>
+    <aside>您可以在 <a
+            href="https://huggingface.co/datasets/HuggingFaceFW/fineweb/blob/main/lighteval_tasks.py">此处</a> 找到我们使用的完整任务列表和提示。</aside>
+    <h2>🍷 FineWeb的构建方法</h2>
+    <p>在接下来的小节中，我们将解释生成FineWeb数据集所采取的每个步骤。</p>
+    <figure class="l-body">
+        <img src="assets/images/fineweb-recipe.png"/>
+    </figure>
+    <aside>您可以在 <a
+                href="https://github.com/huggingface/datatrove/blob/main/examples/fineweb.py">此处</a> 找到完全可重现的 <code>datatrove</code> 配置。</aside>
+    <h3>起点：文本提取</h3>
+    <p>CommonCrawl数据主要有两种格式：WARC和WET。 <strong>WARC </strong>（网页存档格式）文件包含抓取的原始数据，包括完整的页面HTML和请求元数据。 <strong>WET</strong>（WARC封装文本）文件提供了这些网站的纯文本版本。</p>
+    <p>许多数据集以WET文件作为起点。根据我们的经验，Common Crawl用于创建这些WET文件的默认文本提取方法对于LLM预训练的目标来说并不理想<d-footnote>特别是，我们怀疑它保留了太多的样板内容和导航菜单。</d-footnote>，并且有各种开源库提供了更好的文本提取方法。我们使用trafilatura库<d-cite bibtex-key="barbaresi-2021-trafilatura"></d-cite>从WARC文件中提取文本内容，通过对结果的视觉检查，与其他库相比，该库提供了高质量的提取效果。</p>
+    <aside>您可以在 <a href="https://github.com/scrapinghub/article-extraction-benchmark/blob/master/README.rst">此处</a> 找到比较几种文本提取库的基准测试。</aside>
+    <p>为了验证这一决策，我们直接使用WET文件处理了2019 - 18的转储数据，并使用trafilatura从WARC文件中提取文本进行处理<d-footnote>我们使用trafilatura的默认选项，并设置 <code>favour_precision=True</code>。</d-footnote>。我们对每个数据集应用了相同的处理（我们的基础过滤 + MinHash，详见下文）并训练了两个模型。虽然使用WET数据得到的数据集大约大25%（约2540亿个标记），但事实证明其质量远低于使用trafilatura从WARC文件中提取文本得到的数据集（约2000亿个标记）。对一些样本的视觉检查证实，WET文件中的许多额外标记是不必要的页面样板内容。</p>
+    <p>然而，需要注意的是，文本提取是我们处理过程中最耗时的步骤之一，因此我们认为对于预算较低的团队来说，使用现成的WET数据可能是一个合理的折衷方案。</p>
+    <div class="main-plot-container">
+        <figure><img src="assets/images/wet_comparison.png"/></figure>
+        <div id="plot-wet_comparison"></div>
+    </div>
+
+    <h3>基础过滤</h3>
+    <p>过滤是数据整理过程中的重要部分。它包括去除部分数据（可以是单词、行甚至整个文档），这些数据会降低模型的性能，因此在我们以评估为驱动的数据集创建过程中被认为是“低质量”的。</p>
+    <p>作为我们过滤的基础，我们使用了RefinedWeb<d-cite bibtex-key="penedo2023refinedweb"></d-cite>的部分设置。具体来说，我们：</p>
+    <ul>
+        <li>使用 <a
+                href="https://dsi.ut-capitole.fr/blacklists/">黑名单</a> 进行URL过滤，以去除成人内容。
+        </li>
+    </ul>
+    <ul>
+        <li>应用 <a
+                href="https://fasttext.cc/docs/en/language-identification.html">fastText语言分类器</a><d-cite bibtex-key="joulin2016bag"></d-cite><d-cite bibtex-key="joulin2016fasttext"></d-cite>，仅保留得分 ≥ 0.65的英文文本。
+        </li>
+    </ul>
+    <ul>
+        <li>应用MassiveText<d-cite bibtex-key="rae2022scaling"></d-cite>的质量和重复过滤（使用默认阈值）。
+        </li>
+    </ul>
+    <p>在对每个提取的文本转储应用此过滤后（目前有96个转储），我们获得了大约36万亿个标记的数据<d-footnote>与本报告中其他地方一样，这是使用 <code>gpt2</code> 分词器进行分词后的标记数量。</d-footnote>。</p>
+    <h3>数据去重</h3>
+    <p>去重是为LLM预训练创建大型网页数据集时最重要的步骤之一。数据集去重方法旨在识别和去除数据集中的冗余/重复数据。 </p>
+    <h4>为什么要去重？</h4>
+    <p>网络上有许多聚合器、镜像、模板化页面或只是在不同域名和网页上传播的重复内容。有时，这些重复页面甚至可能是由抓取器本身引入的，当不同的链接指向同一页面时就会出现这种情况。 </p>
+    <p>去除这些重复项（去重）与模型性能的提升<d-cite bibtex-key="lee2022deduplicating"></d-cite>和预训练数据记忆的减少<d-cite bibtex-key="carlini2023quantifying"></d-cite>相关，这可能有助于提高模型的泛化能力。此外，通过去重获得的性能提升可以等同于训练效率的提高：通过去除重复内容，模型可以用更少的训练迭代达到相同的性能水平 —— 或者等效地，对于给定数量的训练标记，模型将看到更多样化的数据<d-cite bibtex-key="muennighoff2023scaling"></d-cite><d-cite bibtex-key="hernandez2022scaling"></d-cite>。</p>
+    <p>有不同的方法来识别甚至定义重复数据。常见的方法依赖于哈希技术来加速过程，或者构建高效的数据结构来索引数据（如后缀数组）。方法也可以是“模糊”的，即使用某种相似度度量将文档标记为重复项，或者是“精确”的，即检查两个文档（或行、段落或任何其他粒度级别）之间的精确匹配<d-footnote>请注意，即使我们在这里讨论“模糊”去重，我们也仅采用基于字符/单词匹配的方法，即表面级别的文本。更复杂的去重概念涉及“语义”去重：比较/去除与相同概念相关的文本，例如使用同义词或释义。我们在这里不讨论这些主题，但请注意，它们在大规模合成数据生成领域可能很重要（例如，参见我们关于 <a href="https://huggingface.co/blog/cosmopedia">Cosmopedia发布</a> 的相关内容）。</d-footnote>。</p>
+        
+    <h4>我们的去重参数</h4>
+    <p>遵循RefinedWeb<d-cite bibtex-key="penedo2023refinedweb"></d-cite>的方法，我们决定应用MinHash，这是一种基于模糊哈希的去重技术，能够有效地扩展到多个CPU节点，并允许我们调整相似度阈值（通过控制桶的数量和大小）以及考虑的子序列长度（通过控制n-gram的大小）。我们选择收集每个文档的5-gram<d-footnote>我们的单位是“单词”，在 <a href="https://github.com/huggingface/datatrove/blob/e9963f69f1fbab1a61339bd1b497f6e138b9f47f/src/datatrove/pipeline/dedup/minhash.py#L196">MinHash处理函数</a> 中使用 <a href="https://github.com/huggingface/datatrove/blob/e9963f69f1fbab1a61339bd1b497f6e138b9f47f/src/datatrove/utils/word_tokenizers.py#L323">特定于语言的单词分词器</a> 进行计算。</d-footnote>，并使用总共112个哈希函数计算MinHash，将其分成14个桶，每个桶包含8个哈希值 —— 目标是识别相似度至少为75%的文档。在任何桶中具有相同8个MinHash值的文档被视为彼此重复。</p>
+    <p>这意味着对于相似度（s）为0.7、0.75、0.8和0.85的两个文档，它们被识别为重复项的概率分别为56%、77%、92%和98.8%（1 - (1 - s^8)^14）。请参阅下面的图表，比较我们使用112个哈希值的设置与RefinedWeb使用9000个哈希值的设置，后者将哈希值分成450个桶，每个桶包含20个哈希值（这需要大量的计算资源，因为每个单独的哈希值都必须计算、存储并与其他文档的哈希值进行比较）：</p>
+    <div class="main-plot-container">
+        <figure><img src="assets/images/minhash_params.png"/></figure>
+        <div id="plot-minhash_params"></div>
+    </div>
+    <p>虽然RefinedWeb中大量的哈希函数允许更陡峭、更明确的截止点（实际相似度接近阈值的文档更有可能被正确识别），但我们认为计算和存储方面的节省是一个合理的折衷方案。</p>
+    <p>还需要注意的是，文档内去重已经由我们的重复过滤器处理，该过滤器会去除包含许多重复行和段落的文档。</p>
+    
+    <h4>去重越多越好，对吧？</h4>
+    <p>最初，我们假设 <em>去重越多越好</em>，因此我们的第一种方法是将整个数据集（所有90多个转储）作为一个大的数据集一起进行去重，使用MinHash。</p>
+    <p>我们以迭代的方式进行：从最近的转储（当时是2023 - 50）开始，按时间顺序进行，直到我们处理完最旧的抓取数据。我们不仅对每个转储内部进行去重，还去除与之前处理过的转储中的任何文档匹配的文档。 </p>
+    <p>例如，对于第二近的转储（当时是2023 - 40），我们除了对其内部进行去重外，还将其与最近的转储进行去重。因此，转储越旧，与之进行去重的转储数量就越多，从其中去除的数据也就越多（实际上，在最旧的转储中，去重步骤去除了超过90%的基础过滤数据）。</p>
+    <p>以这种方式对数据集进行去重后，得到了4万亿个标记的数据，但令我们非常惊讶的是，当在随机采样的3500亿个标记子集上进行训练时，我们的消融模型与在未去重数据上训练的模型相比几乎没有改进，在我们的综合任务上的得分远低于其前身RefinedWeb（见下图）。</p>
+    <div class="main-plot-container">
+        <figure><img src="assets/images/dedup_all_dumps_bad.png"/></figure>
+        <div id="plot-all_dumps_bad"></div>
+    </div>
+    <p>这挑战了我们认为更多去重必然会导致更高基准测试得分的假设，因此我们决定仔细研究最旧的转储之一，即2013 - 48转储：</p>
+    <ul>
+        <li>去重前，该转储有大约4900亿个标记。</li>
+    </ul>
+    <ul>
+        <li>经过我们的迭代MinHash去重后，大约剩下310亿个标记（94%的数据已被去除）。
+        </li>
+    </ul>
+    <p>作为一个实验，我们尝试在从2013 - 48转储中采样的280亿个标记上训练两个模型：</p>
+    <ul>
+        <li>完全去重后剩余的大约310亿个标记（<em>最初保留的数据</em>）。
+        </li>
+    </ul>
+    <ul>
+        <li>通过对在迭代去重过程中从该转储中去除的大约4600亿个标记进行单独去重（不考虑其他转储）获得的1710亿个标记（<em>最初去除的数据</em>）<d-footnote>虽然 <em>最初保留的数据</em> 中的某些文档可能与 <em>最初去除的数据</em> 中的文档相似，但我们估计重叠部分较小（约40亿个标记）。</d-footnote>。
+        </li>
+    </ul>
+    <div class="main-plot-container">
+        <figure><img src="assets/images/removed_data_cross_dedup.png"/></figure>
+        <div id="plot-removed_data_dedup"></div>
+    </div>
+    <p>这些结果表明，对于这个单独考虑的较旧转储，保留的数据（原始数据的10%）实际上比我们去除的90%的数据 <em>更差</em><d-footnote>请注意，这些消融模型仅在该转储的数据上进行训练，因此是独立于所有其他转储进行考虑的。</d-footnote>。这也通过视觉检查得到了证实：<em>最初保留的数据</em> 包含更多的广告、关键词列表和格式通常较差的文本，而 <em>最初去除的数据</em> 则不然。</p>
+    <h4>退一步：单独转储去重</h4>
+    <p>我们决定尝试一种替代方法：我们使用MinHash对每个转储进行单独去重（独立于其他转储）。这得到了20万亿个标记的数据。</p>
+    <p>当在该数据集的随机样本上进行训练时，我们发现它现在与RefinedWeb的性能相当（见下图）：</p>
+    <div class="main-plot-container">
+        <figure><img src="assets/images/cross_ind_unfiltered_comparison.png"/></figure>
+        <div id="plot-ind_dedup_better"></div>
+    </div>
+    <p>我们假设去重带来的主要改进是去除了每个转储中都存在的非常大的聚类（您可以在RefinedWeb论文中找到这些聚类的一些示例，每个聚类包含 <em>数十万个</em> 文档），而对重复项数量较少（少于约100，即转储的数量）的聚类进行进一步去重实际上会损害性能：在任何其他转储中都找不到重复匹配项的数据实际上可能质量较差/分布较偏离（如2013 - 48数据的结果所示）。 </p>
+    <p>虽然在对几个转储一起进行去重时可能会看到一些性能提升，但在整个数据集（所有转储）的规模上，这种低质量数据上采样的副作用似乎更具影响力。</p>
+    <p>一种可能的情况是，随着过滤质量的提高，这种影响可能不会那么明显，因为过滤可能能够去除一些低质量数据。我们还尝试在单独去重的转储基础上应用不同的、通常是“更轻量级”的去重方法。您可以在下面进一步了解这些方法。</p>
+    
+        <h4>关于测量去重效果的说明</h4>
+    <p>由于去重的性质，其效果在数据集的较小切片中（如280亿个标记，我们用于过滤消融实验的大小）并不总是很明显。此外，必须考虑到在对所有CommonCrawl转储进行去重时存在特定的影响，因为有些URL/页面会从一个转储重新抓取到下一个转储。</p>
+    <p>为了可视化训练标记数量的扩展对测量去重影响的影响，我们考虑了以下（关于观察到的重复程度非常极端且不现实的）理论场景：</p>
+    <ul>
+        <li>有100个CommonCrawl转储（大致准确）。</li>
+    </ul>
+    <ul>
+        <li>每个转储都已经进行了完美的单独去重（该转储中的每个文档都是唯一的）。
+        </li>
+    </ul>
+    <ul>
+        <li>每个转储都是彼此的完美副本（转储之间的最大可能重复，实际上是最坏的情况）。
+        </li>
+    </ul>
+    <ul>
+        <li>每个转储有2000亿个标记（总计20万亿个标记，即我们上面单独去重后的结果大小）。
+        </li>
+    </ul>
+    <ul>
+        <li>每个转储由1000个标记的文档组成（每个转储有2亿个文档）。
+        </li>
+    </ul>
+    <p>然后，我们模拟从这个20万亿个标记的整个数据集中均匀采样文档，以获得10亿、100亿、1000亿、3500亿和1万亿个标记的子集。在下面的图像中，您可以看到每个文档会被重复的频率。</p>
+    <div class="main-plot-container">
+        <figure><img src="assets/images/duplicates_simul.png"/></figure>
+        <div id="plot-duplicates-simul"></div>
+    </div>
+    <p>对于10亿个标记，几乎所有文档都是唯一的（重复次数 = 1），尽管在整个数据集中每个文档重复了100次（每个转储一次）。我们在1000亿个标记的规模（占总数据集的0.5%）开始看到一些变化，有大量文档重复了两次，甚至有一些重复了4 - 8次。在1万亿个标记的更大规模（占总数据集的5%）上，大多数文档重复了多达8次，有些甚至重复了多达16次。 </p>
+    <p>我们在3500亿个标记的规模上对去重后的数据进行了性能评估，根据这个理论场景，该规模的数据将包含大量重复多达8次的文档。这个模拟说明了在去除最大的重复聚类后，测量去重对LLM训练影响的固有困难。</p>
+
+    <h4>其他（失败的）全局方法</h4>
+    <p>为了在我们新发现的方法（独立对每个转储进行去重）的基础上进行改进，我们尝试通过使用替代的全局（对所有转储）去重方法对独立进行MinHash去重后的20万亿个标记的数据进行进一步去重。我们探索了以下方法：</p>
+    <ul>
+        <li>URL去重，即我们只保留每个规范化（小写）URL的一个文档（去除了71.5%的标记，剩下5.6T） —— <em>FineWeb URL去重</em>。</li>
+    </ul>
+    <ul>
+        <li>行去重：
+            <ul>
+                <li>去除每个重复行的所有出现项，只保留一个（随机选择）（去除了77.8%的标记，剩下4.4T） —— <em>FineWeb行去重</em>。</li>
+            </ul>
+            <ul>
+                <li>与上述相同，但仅去除至少包含10个单词的重复行，并在去重后去除句子少于3个的文档（去除了85%的标记，剩下2.9T） —— <em>FineWeb行去重（带最小单词数）</em>。</li>
+            </ul>
+            <ul>
+                <li>去除每个重复的3行跨度的所有出现项，在查找重复项时将每个数字视为0（去除了80.9%的标记，剩下3.7T） —— <em>FineWeb 3行去重</em>。</li>
+            </ul>
+        </li>
+    </ul>
+    <p>在这些方法处理后的数据上训练的模型的性能始终比原始独立去重数据的性能差（尽管程度不同）：</p>
+    <div class="main-plot-container">
+        <figure><img src="assets/images/dedup_attempts.png"/></figure>
+        <div id="plot-dedup_attempts"></div>
+    </div>
+
+    <h3>额外的质量过滤</h3>
+    <p>到目前为止，我们使用基础过滤和独立MinHash已经达到了我们试图重现和扩展的先前工作RefinedWeb的相同性能。然而，在我们的综合任务中，另一个经过大量过滤的数据集C4<d-cite bibtex-key="raffel2023exploring"></d-cite>在我们评估套件的一些基准测试中仍然表现出更强的性能。</p>
+    <p>因此，我们着手寻找新的过滤步骤，首先是为了达到C4的性能，然后是超越它。一个自然的起点是研究C4本身的处理过程。</p>
+    <h4>C4：经受住时间考验的数据集</h4>
+    <p><a href="https://huggingface.co/datasets/c4">C4数据集</a> 于2019年首次发布。它是从 <code>2019 - 18</code> CommonCrawl转储中获得的，通过去除非英文数据、在行和文档级别应用一些启发式过滤、在行级别进行去重以及去除包含黑名单单词的文档。</p>
+    <p>尽管它的历史悠久且对于当前标准来说规模有限（约1750亿个gpt2标记），但这个数据集至今仍然是典型LLM训练的常见子集，被用于相对较新的Llama1<d-cite bibtex-key="touvron2023llama"></d-cite>等模型中。
+        这种成功得益于在该数据集上训练的模型表现出的强大性能，特别是在Hellaswag基准测试<d-cite bibtex-key="zellers-etal-2019-hellaswag"></d-cite>上表现出色，Hellaswag是我们“早期信号”组中信号噪声比最高的基准测试之一。我们尝试将C4中使用的每个不同过滤器应用于独立去重后的FineWeb 2019 - 18转储的基准数据集：</p>
+    <div class="main-plot-container">
+        <figure><img src="assets/images/c4_filters_hellaswag.png"/></figure>
+        <div id="plot-c4_filters_hellaswag"></div>
+    </div>
+    <ul>
+        <li>应用“所有过滤器”（删除不以标点符号结尾的行、提及JavaScript和Cookie通知的行 + 删除长度超出阈值、包含“lorem ipsum”或花括号 <code>{</code> 的文档）使我们能够达到C4在HellaSwag上的性能（分别为“所有过滤器”和“C4”曲线）。
+        </li>
+    </ul>
+    <ul>
+        <li>花括号过滤器和单词长度过滤器仅提供了小幅度的提升，分别去除了2.8%和4.3%的标记。
+        </li>
+    </ul>
+    <ul>
+        <li>终端标点过滤器本身提供了最大的单独提升，但去除了 <em>约30%</em> 的所有标记（！）。
+        </li>
+    </ul>
+    <ul>
+        <li>lorem_ipsum、JavaScript和策略规则各自去除的训练标记少于0.5%，因此我们没有单独在这些规则上进行训练。
+        </li>
+    </ul>
+    <ul>
+        <li>“除（非常具有破坏性的）终端标点外的所有过滤器”的性能优于终端标点过滤器本身，同时总共去除的标记更少（约7%）。
+        </li>
+    </ul>
+    <p>我们决定应用上述所有C4过滤器，但不包括终端标点过滤器。我们通过更长时间的运行验证了这些结果，您可以在下一节的图表中找到相关内容。</p>
+    <h4>开发启发式过滤器的统计方法</h4>
+    <p>为了开发新的启发式过滤器并选择其阈值，我们设计了一个系统的过程：</p>
+    <ol><li>我们首先收集了数据集的大量高级统计信息（超过 <strong>五十</strong> 种不同的指标），范围从常见的文档级指标（如行数、平均行/单词长度等）到文档间重复指标（受MassiveText启发），这些指标来自高质量和低质量的网页数据集；</li>
+        <li>我们选择了两个数据集上计算的指标分布之间Wasserstein距离较大的指标；</li>
+        <li>我们检查了两个分布的直方图，并根据经验选择了一个阈值，使低质量数据集在该指标上更接近高质量数据集；</li>
+        <li>我们通过在参考数据集上使用该过滤器（指标 - 阈值对）并进行小的消融实验来验证结果过滤器的有效性。</li>
+    </ol>
+    <p>由于我们（新的）假设是全局MinHash会极大地提升最旧转储中低质量数据的比例，我们计算了2013 - 48和2015 - 22抓取（两个较旧的抓取）的独立MinHash和（质量较差的）全局MinHash版本的指标。然后，我们通过查看每个版本的这些指标的分布，从宏观层面比较了统计数据。</p>
+    <p>也许并不太令人惊讶的是，鉴于我们在去重方面的发现，我们发现两种去重方法在大多数指标上存在显著差异。例如，<code>行字符重复率</code> 指标（重复行中的字符数 / 字符总数）从独立去重（2015 - 22为0.0053，2013 - 48为0.0058）到全局去重（2015 - 22为0.011，2013 - 48为0.01）大致翻了一番，这表明后者的文档间重复率更高。</p>
+    <p>按照上述过程对这些数据集进行处理后，得到了 <strong>十七</strong> 个候选指标 - 阈值对。在下面的图像中，您可以看到其中三个直方图：</p>
+    <div class="main-plot-container">
+        <figure><img src="assets/images/stats.png"/></figure>
+        <div id="plot-stats"></div>
+    </div>
+
+    <p>例如，我们检查了“以标点符号结尾的行的比例”的直方图（见上图），并观察到全局MinHash在约0.12处的文档密度增加。
+        然后，我们使用这个阈值进行过滤，发现去除的数据中包含大量短列表或仅由文档布局文本（如“主页”、“注册”等）组成。
+    </p>
+
+    <p>然后，我们通过在 <em>2019 - 18抓取</em> 上进行几次 <em>280亿个标记</em> 的消融实验，评估了这十七个新创建的过滤器的有效性。在所有这些实验中，我们确定了 <strong>三个</strong> 过滤器（基于上图的直方图）在综合得分上表现出最显著的改进：</p>
+    <ul>
+        <li>去除以标点符号结尾的行的比例 ≤ 0.12的文档（去除了10.14%的标记） —— 相比之下，原始C4终端标点过滤器去除了30%。
+        </li>
+    </ul>
+    <ul>
+        <li>去除重复行中字符比例 ≥ 0.1的文档（去除了12.47%的标记） —— 原始MassiveText对此比例的阈值是 ≥ 0.2。
+        </li>
+    </ul>
+    <ul>
+        <li>去除长度小于30个字符的行的比例 ≥ 0.67的文档（去除了3.73%的标记）。
+        </li>
+    </ul>
+    <ul>
+        <li>当同时应用这三个过滤器时，大约去除了22%的标记。</li>
+    </ul>
+    <div class="main-plot-container">
+        <figure><img src="assets/images/custom_filters.png"/></figure>
+        <div id="plot-custom_filters"></div>
+    </div>
+    <p>这些过滤器使我们能够进一步提高性能，特别是超越了C4数据集的性能，同时提供了一个更大的数据集。</p>
+
+    <h3>最终的🍷 FineWeb数据集</h3>
+    <p>最终的 <a href="https://huggingface.co/datasets/HuggingFaceFW/fineweb">🍷 FineWeb</a> 数据集包含15T标记，并按顺序包括以下先前提到的步骤，每个步骤都在我们的基准测试任务组上提供了性能提升：</p>
+    <ul>
+        <li>基础过滤</li>
+    </ul>
+    <ul>
+        <li>每个转储独立进行MinHash去重</li>
+    </ul>
+    <ul>
+        <li>选择C4过滤器</li>
+    </ul>
+    <ul>
+        <li>我们的自定义过滤器（在上一节中提到）</li>
+    </ul>
+    <div class="main-plot-container">
+        <figure><img src="assets/images/filtering_steps.png"/></figure>
+        <div id="plot-all_filtering_steps"></div>
+    </div>
+    <h4>与其他网页级数据集的比较</h4>
+    <p>我们将 <a href="https://huggingface.co/datasets/HuggingFaceFW/fineweb">🍷 FineWeb</a> 与以下通常被认为是最高质量的公开可用网页级数据集进行了比较（我们还为每个数据集指出了其公开版本中的近似标记数量）：</p>
+    <ul>
+        <li><a
+                href="https://huggingface.co/datasets/tiiuae/falcon-refinedweb">RefinedWeb</a>（5000亿个标记）<d-cite bibtex-key="penedo2023refinedweb"></d-cite>
+        </li>
+    </ul>
+    <ul>
+        <li><a href="https://huggingface.co/datasets/allenai/c4">C4</a>（1720亿个标记）<d-cite bibtex-key="raffel2023exploring"></d-cite></li>
+    </ul>
+    <ul>
+        <li><a href="https://huggingface.co/datasets/allenai/dolma">Dolma v1.6</a>（3T标记）（CommonCrawl部分） <d-cite bibtex-key="dolma"></d-cite> <d-footnote>有一个较新的Dolma版本v1.7，规模较小。</d-footnote>
+        </li>
+    </ul>
+    <ul>
+        <li><a href="https://huggingface.co/datasets/EleutherAI/pile">The Pile</a>（3400亿个标记） <d-cite bibtex-key="gao2020pile"></d-cite></li>
+    </ul>
+    <ul>
+        <li><a
+                href="https://huggingface.co/datasets/cerebras/SlimPajama-627B">SlimPajama</a>（6270亿个标记） <d-cite bibtex-key="cerebras2023slimpajama"></d-cite>
+        </li>
+    </ul>
+    <ul>
+        <li><a
+                href="https://huggingface.co/datasets/togethercomputer/RedPajama-Data-V2">RedPajama2</a>（20T标记） <d-cite bibtex-key="together2023redpajama"></d-cite>
+            （去重后）
+        </li>
+    </ul>
+    <ul>
+        <li>以及我们新的 <a href="https://huggingface.co/datasets/HuggingFaceFW/fineweb">🍷 FineWeb</a>（15T标记）（本报告）
+        </li>
+    </ul>
+    <p>您可以在 <a
+            href="https://huggingface.co/collections/HuggingFaceFW/ablation-models-662457b0d213e8c14fe47f32">此集合</a> 中找到公开可用的3500亿标记训练的消融模型。我们在每1000个训练步骤上传了检查点。您还可以在 <a
+            href="https://huggingface.co/datasets/HuggingFaceFW/fineweb/blob/main/eval_results.csv">此处</a> 找到我们的完整 <a
+            href="https://huggingface.co/datasets/HuggingFaceFW/fineweb/blob/main/eval_results.csv">评估结果</a>。</p>
+    <div class="main-plot-container">
+        <figure><img src="assets/images/dataset_ablations.png"/></figure>
+        <div id="plot-dataset_ablations"></div>
+    </div>
+    <p>据我们所知，🍷 FineWeb是目前能够实现最高模型性能，同时允许在数万亿个标记上进行训练的开源数据集。</p>
+
+    <h2>📚 FineWeb-Edu</h2>
+
+    <div class="main-plot-container">
+        <figure>
+            <img src="assets/images/edu_ablations.png">
+            <figcaption style="font-style: italic; margin-top: 10px;">📚 FineWeb-Edu在我们的评估任务组上优于🍷 FineWeb和所有其他开源网页数据集。</figcaption>
+        </figure>
+        <div id="plot-edu_ablations">
+        </div>
+    </div>
+    <p><a href="https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu">📚 FineWeb-Edu</a> 是FineWeb的一个额外发展，我们很高兴在本技术报告中介绍并公开发布它。📚 FineWeb-Edu基于一种最近出现的过滤LLM训练数据集的新方法：使用合成数据开发用于识别教育内容的分类器。这种技术在Llama 3<d-cite bibtex-key="llama3modelcard"></d-cite>和Phi3<d-cite bibtex-key="abdin2024phi"></d-cite>的训练中得到了显著应用，但在我们看来，其在大规模网页数据过滤方面的影响尚未得到充分的公开探索。</p>
+    <p>流行的Phi3模型在3.3万亿和4.8万亿个标记上进行训练，论文<d-cite bibtex-key="abdin2024phi"></d-cite>指出：</p>
+    <blockquote>我们的训练数据包括经过大量过滤的公开可用网页数据（根据“教育水平”），这些数据来自各种开放的互联网来源，以及合成的LLM生成数据。</blockquote>
+    <p>同样，Llama 3博客文章<d-cite bibtex-key="meta2024responsible"></d-cite>指出：</p>
+    <blockquote>我们发现，前几代Llama擅长识别高质量数据，因此我们使用Llama 2来帮助构建驱动Llama 3的文本质量分类器。</blockquote>
+    <p>然而，这些分类器和过滤后的数据集并未公开。为了进一步提高🍷 FineWeb的质量，我们使用 <a href="https://huggingface.co/meta-llama/Meta-Llama-3-70B-Instruct">Llama - 3 - 70B - Instruct</a> 生成的注释开发了一个教育质量分类器，以创建 <a href="https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu"><strong>📚 FineWeb-Edu</strong></a>。</p>
+
+    <h3>大规模标注教育质量</h3>
+    <p>我们使用 <a href="https://huggingface.co/meta-llama/Meta-Llama-3-70B-Instruct">Llama - 3 - 70B - Instruct</a> 对🍷 FineWeb中的50万个样本进行了注释，为每个样本的教育质量从0到5进行评分。</p>
+    <p>我们探索了各种提示格式，以使用LLM自动提取教育得分，并发现袁等人<d-cite bibtex-key="yuan2024self"></d-cite>的加法量表效果最佳。这种量表允许LLM对每个额外的得分点进行推理，不同于单评级李克特量表，后者将样本归入预定义的类别。然后，为了避免LLM偏爱像arXiv摘要和投稿这样的高度技术性页面，我们专注于小学和中学水平的知识。通过在过滤过程中设置阈值为3（在0到5的量表上），我们还能够保留一些高级教育页面。</p>
+    <div style="text-align: center; margin: 20px 0;">
+        <img src="https://cdn-uploads.huggingface.co/production/uploads/61c141342aac764ce1654e43/fjZQ4izIj1rx1xQnBTKKr.png" alt="LLM注释提示" style="width: 90%; max-width: 800px; height: auto;">
+        <figcaption style="font-style: italic; margin-top: 10px;">用于Llama3注释教育得分的提示，也可在 <a href="https://huggingface.co/HuggingFaceFW/fineweb-edu-classifier/blob/main/utils/prompt.txt">此处</a> 找到。</figcaption>
+    </div>    
+    <p>在选择用于注释数据的开源权重模型方面，我们尝试了几种模型，包括 <a href="https://huggingface.co/mistralai/Mixtral-8x7B-Instruct-v0.1">Mixtral - 8x7B - Instruct</a> 和 <a href="https://huggingface.co/mistralai/Mixtral-8x22B-Instruct-v0.1">Mixtral - 8x22B - Instruct</a>、<a href="https://huggingface.co/meta-llama/Meta-Llama-3-70B-Instruct">Llama - 3 - 70B - Instruct</a>，以及一个综合这三个模型得分的评审团<d-cite bibtex-key="verga2024replacing"></d-cite>。在我们的实验中，我们发现单独使用Llama3得到的结果最可靠。</p>
+
+    <h3>训练分类器</h3>
+    <p>为了将我们的注释扩展到FineWeb中的数万亿个标记，我们使用Llama3 - 70B的注释来训练一个小分类器。我们使用的模型是 <a href="https://huggingface.co/Snowflake/snowflake-arctic-embed-m">Snowflake - arctic - embed</a> 嵌入模型，其上有一个带有单个回归输出的分类头。我们在45万个Llama 3注释上对该模型进行了20个epoch的训练，学习率为3e - 4，冻结了嵌入层和编码器层。我们保存了在我们保留的4.5万个样本验证集上F1得分最高的检查点，将Llama 3的注释视为真实标签。训练后，我们将得分四舍五入为从 <code>0</code> 到 <code>5</code> 的整数。</p>
+    <p>然后，我们通过使用一个固定阈值来确定一个文件是否具有教育性，将问题转换为一个二分类任务。使用阈值 <code>3</code> 时，模型在验证集上的F1得分达到了82%，表明在区分高质量教育内容方面表现出色。</p>
+    <p>分类器可在 <a href="https://huggingface.co/HuggingFaceFW/fineweb-edu-classifier">HuggingFaceFW/fineweb - edu - classifier</a> 找到。训练和推理代码可在 <a href="https://github.com/huggingface/cosmopedia/tree/main/classification">GitHub</a> 上找到。</p>
+    
+    <h3>过滤和结果</h3>
+    <p>我们将分类器应用于🍷 FineWeb的15T标记，这一过程需要6000个H100 GPU小时。我们研究了使用不同过滤阈值的影响，发现使用阈值 <code>3</code> 得到的整体结果最佳。尽管使用高于 <code>3</code> 的阈值可以提高在知识和推理密集型基准测试上的性能，但会显著降低在HellaSwag和PIQA上的性能。下图显示了每个阈值与FineWeb在六个不同基准测试上的性能比较；它使用了一个在80亿个标记上训练的18.2亿参数模型。</p>
+    <div class="main-plot-container">
+        <figure>
+            <img src="assets/images/edu-8k.png">
+        </figure>
+        <div id="plot-edu-8k"></div>
+    </div>
+    <p><strong>注意：</strong> 此消融实验是在FineWeb和FineWeb - Edu子集的2024 - 10转储的80亿个标记上进行的，这可能不能代表整个数据集。下一个消融实验表明，阈值3的结果在从所有FineWeb转储中选取的3500亿个标记的更长运行中仍然成立，但在HellaSwag上，我们注意到性能略有下降。</p>
+    <p>我们通过过滤掉得分低于3的样本构建了 📚 FineWeb - Edu。这去除了92%的数据集，剩下1.3万亿个教育标记。 为了在更大规模上评估这种过滤的有效性，我们使用一个18.2亿参数的模型在3500亿个标记上进行了消融实验，类似于上面提到的FineWeb过滤消融实验：</p>
+    <div class="main-plot-container">
+        <figure>
+            <img src="assets/images/edu-100k.png">
+        </figure>
+        <div id="plot-edu-100k"></div>
+    </div>
+    <p>以下是上述消融实验结果的关键亮点：</p>
+    <ul>
+        <li>📚 FineWeb - Edu <strong>优于🍷 FineWeb和所有其他开源网页数据集，在教育基准测试（如MMLU、ARC和OpenBookQA）上有显著改进</strong>。</li>
+        <li>它使用显著更少的数据达到了相同的性能，与C4和Dolma相比，达到MMLU结果所需的标记数量减少了10倍。</li>
+        <li>这证明了使用基于LLM注释训练的分类器进行大规模数据过滤的有效性。</li>
+    </ul>
+    <p>鉴于阈值2也表现出了较强的性能，同时保留了更多的数据，我们发布了一个使用该阈值过滤的额外数据集，包含5.4万亿个标记，可在 <a href="https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu-score-2">HuggingFaceFW/fineweb - edu - score - 2</a> 找到。</p>
+    <p>您可以在 <a href="https://huggingface.co/collections/HuggingFaceFW/fineweb-edu-6659c3f3d399d0e1d648adfd">此集合</a> 中找到这两个数据集以及用于过滤的分类器。</p>
+
+
+
+    <h2>额外内容：CommonCrawl随时间的变化</h2>
+    <blockquote>
+        <p>就像美酒一样，并非所有的抓取数据都是一样的。</p>
+    </blockquote>
+    <p>在进行过滤步骤的消融实验时，我们注意到某些抓取数据的性能明显优于其他数据。我们决定对此现象进行研究。</p>
+    <h3>按抓取数据的基准测试性能</h3>
+    <p>对于每个抓取数据，我们在从该抓取数据（经过基础过滤和MinHash去重步骤后）中随机采样的270亿个标记上训练了两个18亿参数的模型，每次运行使用不同的随机270亿标记采样。我们总共训练了192个这样的模型，总计超过6万个H100 GPU小时。然后，我们取两次运行的最后3个检查点，并绘制每个抓取数据的这6个数据点的平均值。</p>
+    <p>下图清楚地显示，一些转储数据的性能远低于其他数据。每年用不同的颜色表示，每年的抓取次数也不同。</p>
+    <div class="main-plot-container l-page-outset">
+        <figure>
+            <img src="assets/images/score_by_dump.png">
+        </figure>
+        <div id="plot-score_by_dump"></div>
+    </div>
+
+    <p>我们研究了这种行为的可能原因，例如每个转储中最常见URL的变化以及潜在的基准测试污染，但未能找到确凿的解释。我们将进一步的研究留待未来的工作。</p>
+
+    <h3>合成数据</h3>
+    <p>我们想知道最近几个抓取数据的强性能是否部分归因于更大数量的合成数据（由LLM生成的数据）的存在。由于最近LLM（特别是ChatGPT）的普及，这种变化并不令人惊讶。</p>
+    <p>据我们所知，目前没有万无一失的方法来检测合成数据，因此我们选择使用一个代理指标：我们测量了每个抓取数据中以下单词的频率： <code>"深入研究", "作为一个大型语言模型", "需要注意的是", "丰富的织锦",
+            "相互交织", "当然！", "深入探讨"</code>，所有这些都是ChatGPT常用的词汇。</p>
+    <p>需要注意的是，并非所有包含这些短语之一的样本都一定是由ChatGPT生成的（而且许多ChatGPT生成的样本也不包含这些短语），但假设合成数据的数量在不同的抓取数据中保持不变，我们预计这些频率在时间上大致保持恒定。</p>
+    <p>结果如下所示：</p>
+    <div class="main-plot-container l-page-outset">
+        <figure>
+            <img src="assets/images/synth_data_contamination.png">
+        </figure>
+        <div id="plot-synth_data_contamination"></div>
+    </div>
+    <p>虽然频率在2023 - 14之前大致保持恒定（ChatGPT于2022年底发布），但我们发现最近的抓取数据中我们的代理指标急剧增加。虽然这个简单的测试不足以得出ChatGPT完成结果和其他合成数据正在提高最近抓取数据质量的结论，但至少它似乎没有对其造成严重损害。</p>
+    <p>我们预计新的CC抓取数据中将继续出现越来越多的合成数据。然而，虽然对于相对较小的训练来说，这些数据似乎不会损害性能（甚至可能会提高性能），但对于更大规模的训练来说，情况是否仍然如此尚不清楚。</p>
+
+    <h2>结论与展望</h2>
+    <p>通过我们的开放科学努力，我们希望继续揭示高性能大型语言模型训练这个黑匣子，并使每个模型训练者都能够创建最先进的LLM。我们很高兴继续对FineWeb进行迭代，并以完全开放和可重现的方式发布经过不断改进的网页数据过滤子集。</p>
+    <p>短期内，我们期待将（英语）FineWeb的经验应用到其他语言上。虽然英语目前在LLM领域占据主导地位，但我们相信，尽可能让其他语言的高质量网页数据变得易于获取将产生巨大的影响。</p>
+    <p>简而言之：研究大规模和开放环境下创建数据集的科学的未来是光明而令人兴奋的 🤗。</p>
+</d-article>
+
+<d-appendix>
+    <d-bibliography src="bibliography.bib"></d-bibliography>
+    <style>
+      d-appendix .citation {
+        font-size: 11px;
+        line-height: 15px;
+        border-left: 1px solid rgba(0, 0, 0, 0.1);
+        padding-left: 18px;
+        border: 1px solid rgba(0,0,0,0.1);
+        background: rgba(0, 0, 0, 0.02);
+        padding: 10px 18px;
+        border-radius: 3px;
+        color: rgba(150, 150, 150, 1);
+        overflow: hidden;
+        margin-top: -12px;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+      }
+    </style>
+
+    <h3 id="citation">引用</h3>
+    <p>在学术环境中进行引用时，请将此工作引用为</p>
+    <pre class="citation short">佩内多等人，《FineWeb数据集：大规模提炼网页以获取优质文本数据》，2024年。</pre>
+    <p>BibTeX引用</p>
+    <pre class="citation long">@inproceedings{
+penedo2024the,
+title={The FineWeb Datasets: Decanting the Web for the Finest Text Data at Scale},
+author={Guilherme Penedo and Hynek Kydl{\'\i}{\v{c}}ek and Loubna Ben allal and Anton Lozhkov and Margaret Mitchell and Colin Raffel and Leandro Von Werra and Thomas Wolf},
+booktitle={The Thirty-eight Conference on Neural Information Processing Systems Datasets and Benchmarks Track},
+year={2024},
+url={https://openreview.net/forum?id=n6SCkn2QaG}
+}</pre>
+</d-appendix>
+
+<script>
+    const article = document.querySelector('d-article');
+    const toc = document.querySelector('d-contents');
+    if (toc) {
+        const headings = article.querySelectorAll('h2, h3, h4');
+        let ToC = `<nav role="navigation" class="l-text figcaption"><h3>目录</h3>`;
+        let prevLevel = 0;
+
+        for (const el of headings) {
+            // 元素是否应包含在目录中？
+            const isInTitle = el.parentElement.tagName == 'D-TITLE';
+            const isException = el.getAttribute('no-toc');
+            if (isInTitle || isException) continue;
+            el.setAttribute('id', el.textContent.toLowerCase().replaceAll(" ", "_"))
+            const link = '<a target="_self" href="' + '#' + el.getAttribute('id') + '">' + el.textContent + '</a>';
+
+            const level = el.tagName === 'H2' ? 0 : (el.tagName === 'H3' ? 1 : 2);
+            while (prevLevel < level) {
+                ToC += '<ul>'
+                prevLevel++;
+            }
+            while (prevLevel > level) {
+                ToC += '</ul>'
+                prevLevel--;
+            }
+            if (level === 0)
+                ToC += '<div>' + link + '</div>';
+            else
+                ToC += '<li>' + link + '</li>';
+        }
+
+        while (prevLevel > 0) {
+            ToC += '</ul>'
+            prevLevel--;
+        }
+        ToC += '</nav>';
+        toc.innerHTML = ToC;
+        toc.setAttribute('prerendered', 'true');
+        const toc_links = document.querySelectorAll('d-contents > nav a');
+
+        window.addEventListener('scroll', (_event) => {
+            if (typeof (headings) != 'undefined' && headings != null && typeof (toc_links) != 'undefined' && toc_links != null) {
+                // 然后向前迭代，在第一个匹配项上突出显示并中断
+                find_active: {
+                    for (let i = headings.length - 1; i >= 0; i--) {
+                        if (headings[i].getBoundingClientRect().top - 50 <= 0) {
+                            if (!toc_links[i].classList.contains("active")) {
+                                toc_links.forEach((link, _index) => {
+                                    link.classList.remove("active");
+                                });
+                                toc_links[i].classList.add('active');
+                            }
+                            break find_active;
+                        }
+                    }
+                    toc_links.forEach((link, _index) => {
+                        link.classList.remove("active");
+                    });
+                }
+            }
+        });
+    }
+</script>
+</body>
+</html>
